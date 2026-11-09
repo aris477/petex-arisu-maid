@@ -1,0 +1,20 @@
+{
+  "name": "petex-arisu-maid",
+  "version": "1.2.0-arisu",
+  "private": true,
+  "description": "Tendou Arisu (Maid) custom edition of Petex with 2x HD sprites, speech bubbles, and real-time Codex task notifications.",
+  "main": "app/main.cjs",
+  "author": "iebb (upstream) & aris477 (Arisu Maid Edition)",
+  "license": "Apache-2.0",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "adm-zip": "^0.6.1",
+    "sharp": "^0.35.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aris477/petex-arisu-maid.git"
+  }
+}

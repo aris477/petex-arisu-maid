@@ -1,0 +1,16 @@
+Petex
+Copyright 2026 iebb
+
+Licensed under the Apache License, Version 2.0.
+Upstream repository: https://github.com/iebb/petex
+
+-------------------------------------------------------------------------------
+Petex — Tendou Arisu (Maid) Custom Edition (2026)
+Modified by aris477 based on upstream Petex v1.1.21:
+- Added 2x HD (3072x4576 / 384x416 per cell) sprite atlas validation & 1:1 HiDPI rendering
+- Replaced dual-frame alpha blending gaze with single-frame hysteresis (±3.5°) + micro-lean
+- Fixed Windows high-DPI drag scaling bug by locking BrowserWindow bounds (setBounds)
+- Added Tendou Arisu (Maid) sky-blue speech bubble UI (handheld console, 4-rect Halo, T2 Maid Headband)
+- Added real-time Codex session JSONL task monitor (task_started / task_complete / turn_aborted)
+- Added effortless head-rub petting interaction, random click action mode, and full 8-action context menu
+- Added CodexPetCompanion.cs Windows daemon for automatic Winsta0\Default desktop lifecycle sync
