@@ -1,15 +1,30 @@
 // Codex atlas: eight columns, 192 × 208 cells. Version 2 adds 16 gaze poses.
+// `frames` lists the atlas column for each playback step, so an action can play
+// original frames and pre-rendered in-betweens in any order. In-betweens live in
+// the previously empty columns at the end of each row (see build_pet_atlas.py).
+// `durations` stays parallel to `frames`; when a frame is split in two the
+// original hold time is divided between them, so an action's total cycle length
+// and the rhythm of the untouched frames do not change.
 export const ANIMATIONS = {
-  idle: {row: 0, durations: [600,160,160,200,200,680], cycles: 1},
+  // 0 300 · mid(0→1) 300 · 1 160 · 2 160 · 3 200 · 4 200 · 5 340 · mid(5→0) 340
+  idle: {row: 0, frames: [0,6,1,2,3,4,5,7], durations: [300,300,160,160,200,200,340,340], cycles: 1},
   'running-right': {row: 1, durations: [165,165,165,165,165,165,165,260], cycles: 2},
   'running-left': {row: 2, durations: [165,165,165,165,165,165,165,260], cycles: 2},
-  waving: {row: 3, durations: [220,220,220,380], cycles: 3},
+  // 0 220 · 1 220 · 2 110 · mid(2→3) 110 · 3 190 · mid(3→0) 190
+  waving: {row: 3, frames: [0,1,2,4,3,5], durations: [220,220,110,110,190,190], cycles: 3},
   jumping: {row: 4, durations: [200,190,220,190,360], cycles: 2},
   failed: {row: 5, durations: [220,220,240,280,280,260,240,420], cycles: 2},
-  waiting: {row: 6, durations: [240,240,260,240,240,400], cycles: 2},
-  running: {row: 7, durations: [190,190,190,190,190,320], cycles: 3},
-  review: {row: 8, durations: [240,240,260,240,260,420], cycles: 2},
+  // 0 240 · 1 240 · 2 260 · 3 240 · 4 120 · mid(4→5) 120 · 5 200 · mid(5→0) 200
+  waiting: {row: 6, frames: [0,1,2,3,4,7,5,6], durations: [240,240,260,240,120,120,200,200], cycles: 2},
+  // 0 95 · mid(0→1) 95 · 1..4 各 190 · 5 160 · mid(5→0) 160
+  running: {row: 7, frames: [0,6,1,2,3,4,5,7], durations: [95,95,190,190,190,190,160,160], cycles: 3},
+  // 0 240 · 1 240 · 2 130 · mid(2→3) 130 · 3 240 · 4 260 · 5 210 · mid(5→0) 210
+  review: {row: 8, frames: [0,1,2,6,3,4,5,7], durations: [240,240,130,130,240,260,210,210], cycles: 2},
 };
+// Atlas column for a playback step. Actions without `frames` play columns in order.
+export function frameColumn(animation, frame) {
+  return animation.frames ? animation.frames[frame] : frame;
+}
 export function availableAnimations(pet) {
   return pet?.builtin
     ? ['waving', 'jumping', 'running-left', 'running-right']
@@ -42,12 +57,55 @@ export function animationFrame(state, elapsed) {
   let time = elapsed % animation.durations.reduce((a,b) => a+b, 0);
   let frame = 0;
   while (time >= animation.durations[frame] && frame < animation.durations.length-1) time -= animation.durations[frame++];
-  return {row: animation.row, frame};
+  return {row: animation.row, frame, col: frameColumn(animation, frame)};
 }
 export function gazeFrame(x, y) {
   const angle = (Math.atan2(x, -y) + Math.PI * 2) % (Math.PI * 2);
   const direction = Math.round(angle / (Math.PI / 8)) % 16;
   return {row: 9 + Math.floor(direction / 8), frame: direction % 8};
+}
+// Tween helpers. Offsets are in atlas source pixels of one cell; callers quantise to whole device pixels
+// so the 1:1 HD cells never get resampled.
+export const FADE_MS = 80;
+export function breathLift(elapsed, period = 3600, levels = 2) {
+  return Math.round((1 - Math.cos(elapsed / period * Math.PI * 2)) / 2 * levels);
+}
+// The jump art already samples a parabola at frame midpoints. Interpolating the feet along that parabola
+// keeps the drawn poses but removes the 25px stair-steps between them. Returns null outside the airborne span.
+export function jumpOffset(bottoms, durations, t, frame, cellH) {
+  if (!bottoms || bottoms.length !== durations.length || bottoms.includes(null)) return null;
+  const ground = bottoms[0];
+  const air = bottoms.map(b => ground - b >= cellH * 0.02);
+  const a = air.indexOf(true), b = air.lastIndexOf(true);
+  if (a < 1 || air.slice(a, b + 1).includes(false) || frame < a || frame > b) return null;
+  const start = durations.slice(0, a).reduce((x, y) => x + y, 0);
+  const span = durations.slice(a, b + 1).reduce((x, y) => x + y, 0);
+  const u = Math.max(0, Math.min(1, (t - start) / span));
+  const apex = ground - Math.min(...bottoms.slice(a, b + 1));
+  const limit = cellH * 0.08;
+  return Math.max(-limit, Math.min(limit, ground - 4 * apex * u * (1 - u) - bottoms[frame]));
+}
+// Measure the loaded atlas once: idle silhouette (for the breathing seam) and feet height of each jump frame.
+function measureAtlas(image) {
+  if (typeof document === 'undefined') return null;
+  try {
+    const s = image.naturalWidth === 3072 ? 2 : 1, cw = 192 * s, ch = 208 * s;
+    const c = document.createElement('canvas'); c.width = cw; c.height = ch;
+    const g = c.getContext('2d', {willReadFrequently: true});
+    const span = (row, frame) => {
+      g.clearRect(0, 0, cw, ch); g.drawImage(image, frame * cw, row * ch, cw, ch, 0, 0, cw, ch);
+      const d = g.getImageData(0, 0, cw, ch).data; let top = null, bottom = null;
+      for (let y = 0; y < ch; y++) for (let x = 0; x < cw; x++) if (d[(y * cw + x) * 4 + 3] > 24) { if (top === null) top = y; bottom = y; break; }
+      return {top, bottom};
+    };
+    const idle = span(0, 0), jump = ANIMATIONS.jumping;
+    // Atlases built before in-betweens existed leave those columns empty; remember them so playback can
+    // hold the previous original frame instead (its split durations add back up to the original hold).
+    const blank = new Set();
+    for (const a of Object.values(ANIMATIONS)) for (const col of a.frames || []) if (span(a.row, col).top === null) blank.add(a.row * 8 + col);
+    return {s, ch, blank, band: idle.top === null ? null : Math.round(idle.top + 0.58 * (idle.bottom - idle.top)),
+      jumpBottoms: jump.durations.map((_, f) => span(jump.row, f).bottom)};
+  } catch { return null; }
 }
 function ellipse(ctx, x,y,rx,ry, fill) {ctx.beginPath(); ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2); ctx.fillStyle=fill;ctx.fill();}
 function shape(ctx, data, color) {ctx.fillStyle=color;ctx.fill(new Path2D(data));}
@@ -89,6 +147,7 @@ export class PetSprite {
     this.canvas=canvas;this.ctx=canvas.getContext('2d',{willReadFrequently:true});
     this.pet=null;this.image=null;this.state='idle';this.started=performance.now();
     this._motion=true;this._gaze=null;this._active=true;this.timer=null;this.stopped=false;
+    this.metrics=null;this._mode=undefined;this._fadeAt=-Infinity;this._fadeCanvas=null;this.breathOrigin=performance.now();
     canvas.width=384;canvas.height=416;
     this.visibility=()=>this.refresh();
     if(typeof document!=='undefined')document.addEventListener('visibilitychange',this.visibility);
@@ -129,12 +188,23 @@ export class PetSprite {
   set active(value){if(this._active!==!!value){this._active=!!value;this.started=performance.now();this.refresh();}}
   async setPet(pet) {
     if(this.pet?.id===pet.id)return;
-    this.pet=pet;this.image=null;this.started=performance.now();this.refresh();
+    this.pet=pet;this.image=null;this.metrics=null;this._mode=undefined;this._fadeAt=-Infinity;this.started=performance.now();this.refresh();
     if(!pet.builtin){
       const image=new Image();image.crossOrigin='anonymous';image.src=pet.assetUrl;
       await image.decode();
-      if(this.pet.id===pet.id){this.image=image;this.refresh();}
+      if(this.pet.id===pet.id){this.image=image;this.metrics=measureAtlas(image);this.refresh();}
     }
+  }
+  // Draw one atlas cell in device pixels. lift raises the part above the waist seam; the seam row is
+  // repeated to fill the gap, so nothing is drawn twice and no half-transparent ghost can appear.
+  _drawCell(pose,dx,dy,lift){
+    const ctx=this.ctx,img=this.image,s=this.metrics?.s??(img.naturalWidth===3072?2:1);
+    const cw=192*s,ch=208*s,k=2/s,sx=(pose.col??pose.frame)*cw,sy=pose.row*ch,band=this.metrics?.band;
+    if(lift>0&&band>1&&band<ch){
+      ctx.drawImage(img,sx,sy,cw,band,dx,dy-lift,cw*k,band*k);
+      ctx.drawImage(img,sx,sy+band-1,cw,1,dx,dy+band*k-lift,cw*k,lift);
+      ctx.drawImage(img,sx,sy+band,cw,ch-band,dx,dy+band*k,cw*k,(ch-band)*k);
+    }else ctx.drawImage(img,sx,sy,cw,ch,dx,dy,cw*k,ch*k);
   }
   action(state){this.state=state;this.started=performance.now();this.refresh();}
   refresh(){clearTimeout(this.timer);this.timer=null;this.tick(performance.now());}
@@ -146,23 +216,50 @@ export class PetSprite {
     const dirIdx=gazing?(this._gazeIdx??Math.round(ang/(Math.PI/8))%16):0;
     const ox=gazing?Math.round(Math.sin(ang)*3)/2:0,oy=gazing?Math.round(-Math.cos(ang)*2)/2:0;
     const pose=gazing?{row:9+Math.floor(dirIdx/8),frame:dirIdx%8,ox,oy}:animationFrame(this.motion?this.state:'idle',elapsed);
-    const renderKey=JSON.stringify([this.pet?.id,!!this.image,this.pet?.builtin&&this.motion?Math.floor(now/40):0,pose,this.motion,this.pet?.builtin?this.gaze:null]);
+    if(!gazing&&pose.frame>0&&this.metrics?.blank?.has(pose.row*8+pose.col)){const a=ANIMATIONS[this.motion?this.state:'idle']||ANIMATIONS.idle;pose.col=frameColumn(a,pose.frame-1);}
+    const sprite=!this.pet?.builtin&&!!this.image;
+    // Dissolve only between idle and gaze: both are frontal standing poses with matching silhouettes,
+    // so a short fade reads as a turn of the head. Action poses keep the hard cut (no double image).
+    const mode=sprite?(gazing?'gaze':(this.motion?this.state:'idle')):null;
+    if(sprite&&this.motion&&this._mode!==undefined&&((this._mode==='idle'&&mode==='gaze')||(this._mode==='gaze'&&mode==='idle'))&&typeof document!=='undefined'){
+      if(!this._fadeCanvas){this._fadeCanvas=document.createElement('canvas');this._fadeCanvas.width=384;this._fadeCanvas.height=416;}
+      const f=this._fadeCanvas.getContext('2d');f.clearRect(0,0,384,416);f.drawImage(this.canvas,0,0);this._fadeAt=now;
+    }
+    if(sprite)this._mode=mode;
+    const fade=sprite&&this.motion&&this._fadeCanvas?Math.max(0,1-(now-this._fadeAt)/FADE_MS):0;
+    let dy=0,lift=0,jumpLive=false;
+    const breathing=sprite&&this.motion&&!gazing&&this.state==='idle'&&!!this.metrics?.band;
+    if(sprite&&this.motion&&!gazing&&this.state==='jumping'&&this.metrics){
+      const a=ANIMATIONS.jumping,cyc=a.durations.reduce((x,y)=>x+y,0);
+      const off=jumpOffset(this.metrics.jumpBottoms,a.durations,elapsed%cyc,pose.frame,this.metrics.ch);
+      if(off!==null){jumpLive=true;dy=Math.round(off*2/this.metrics.s);}
+    }
+    if(breathing)lift=breathLift(now-this.breathOrigin);
+    const renderKey=JSON.stringify([this.pet?.id,!!this.image,this.pet?.builtin&&this.motion?Math.floor(now/40):0,pose,this.motion,this.pet?.builtin?this.gaze:null,dy,lift,fade>0?Math.ceil(fade*20):0]);
     if(this.renderKey!==renderKey){
       this.renderKey=renderKey;
-      const ctx=this.ctx;ctx.clearRect(0,0,384,416);ctx.save();ctx.scale(2,2);
-      if(this.pet?.builtin)drawMiso(ctx,this.motion?now:0,this.motion?this.state:'idle',this.motion?this.gaze:null,this.motion,elapsed);
+      const ctx=this.ctx;ctx.clearRect(0,0,384,416);
+      if(this.pet?.builtin){ctx.save();ctx.scale(2,2);drawMiso(ctx,this.motion?now:0,this.motion?this.state:'idle',this.motion?this.gaze:null,this.motion,elapsed);ctx.restore();}
       else if(this.image){
-        const s=this.image.naturalWidth===3072?2:1;
-        ctx.drawImage(this.image,pose.frame*192*s,pose.row*208*s,192*s,208*s,ox,oy,192,208);
+        this._drawCell(pose,Math.round(ox*2),Math.round(oy*2)+dy,lift);
+        if(fade>0){ctx.save();ctx.globalAlpha=fade;ctx.drawImage(this._fadeCanvas,0,0);ctx.restore();}
       }
-      ctx.restore();
     }
     // Static cards and paused/hidden pets have no recurring drawing task.
-    if(!this.motion||!this.pet||(!this.pet.builtin&&(!this.image||gazing)))return;
-    const animation=ANIMATIONS[this.state]||ANIMATIONS.idle;
-    const cycle=animation.durations.reduce((a,b)=>a+b,0);
-    const used=animation.durations.slice(0,pose.frame).reduce((a,b)=>a+b,0);
-    const delay=this.pet.builtin?40:Math.max(16,animation.durations[pose.frame]-(elapsed%cycle-used));
+    clearTimeout(this.timer);this.timer=null;
+    if(!this.motion||!this.pet)return;
+    if(this.pet.builtin){this.timer=setTimeout(()=>{this.timer=null;this.tick(performance.now());},40);return;}
+    if(!this.image)return;
+    let delay=fade>0?16:Infinity;
+    if(!gazing){
+      const animation=ANIMATIONS[this.state]||ANIMATIONS.idle;
+      const cycle=animation.durations.reduce((a,b)=>a+b,0);
+      const used=animation.durations.slice(0,pose.frame).reduce((a,b)=>a+b,0);
+      delay=Math.min(delay,Math.max(16,animation.durations[pose.frame]-(elapsed%cycle-used)));
+      if(jumpLive)delay=16;
+      if(breathing)delay=Math.min(delay,120);
+    }
+    if(delay===Infinity)return;
     this.timer=setTimeout(()=>{this.timer=null;this.tick(performance.now());},delay);
   }
   stop(){this.stopped=true;clearTimeout(this.timer);this.timer=null;if(typeof document!=='undefined')document.removeEventListener('visibilitychange',this.visibility);}

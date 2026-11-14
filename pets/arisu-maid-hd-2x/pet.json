@@ -1,7 +1,8 @@
 {
-  "id": "arisu-maid",
   "displayName": "天童爱丽丝（女仆）",
   "description": "来自《碧蓝档案》的女仆装天童爱丽丝 Q 版桌面伙伴，光之勇者兼女仆修行中。",
   "spriteVersionNumber": 2,
-  "spritesheetPath": "spritesheet.webp"
+  "spritesheetPath": "spritesheet.webp",
+  "id": "8a87ef6b-0a63-428c-af2a-a30448d753af",
+  "fingerprint": "9c48304824174e11e014e75d05603918bb85998f23cfaa36ca0b9144684fb3f3"
 }
