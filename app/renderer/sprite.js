@@ -1,3 +1,6 @@
+import './edge-config.js';
+const EdgeGeometry=globalThis.PetexEdge;
+export const edgeHitBand=EdgeGeometry.hitBand;
 // Codex atlas: eight columns, 192 × 208 cells. Version 2 adds 16 gaze poses.
 // `frames` lists the atlas column for each playback step, so an action can play
 // original frames and pre-rendered in-betweens in any order. In-betweens live in
@@ -30,6 +33,45 @@ export function availableAnimations(pet) {
     ? ['waving', 'jumping', 'running-left', 'running-right']
     : ['waving', 'jumping', 'failed', 'waiting', 'running', 'review', 'running-left', 'running-right'];
 }
+
+/* ------------------------------------------------------------------ *
+ * Edge cling (抓边探头)
+ *
+ * A separate atlas — `edge.webp`, 8 columns × 16 rows of 384 × 512 cells —
+ * holds 32 pre-rendered frames per screen edge. Frame 0 is fully emerged and
+ * frame 31 is retracted; the two directions are exact reverses, so a sequence
+ * interrupted halfway can be walked back from where it stopped instead of
+ * jumping to the start. Four independent poses occupy four contiguous row blocks.
+ * ------------------------------------------------------------------ */
+export const EDGE_CELL = {w: 384, h: 512};
+export const EDGE_FRAMES = 32;
+export const EDGE_COLS = 8;
+// One direction needs 32 frames, i.e. 4 rows of 8. Directions are stacked, so the
+// complete atlas is 8 × 16, with four independent direction blocks.
+export const EDGE_ROWS_PER_SIDE = 4;
+export const EDGE_INTERVAL = 45;          // ms per frame, from the artwork's manifest
+export const EDGE_HOLD_EMERGED = 700;
+export const EDGE_HOLD_RETRACTED = 550;
+// Screen edge position inside one cell, and the row block this direction occupies.
+export const EDGE_SIDES = EdgeGeometry.SIDES;
+// Cell coordinates for a frame of one direction.
+export function edgeCellXY(side, frame) {
+  const f = Math.max(0, Math.min(EDGE_FRAMES - 1, frame | 0));
+  return {
+    x: (f % EDGE_COLS) * EDGE_CELL.w,
+    y: (EDGE_SIDES[side].block * EDGE_ROWS_PER_SIDE + Math.floor(f / EDGE_COLS)) * EDGE_CELL.h,
+  };
+}
+// Where a retract settles. Measured on the artwork (left direction, x >= 64 = on screen):
+// frames 28-31 are empty on screen, 27 has a single pixel column, 26 has 7 px and 25 has
+// 14 px — all too little to aim at. Frame 22 still shows 39 px of hair with the
+// fingertips gripping the edge, so she stays visible and findable instead of vanishing.
+export const EDGE_VISIBLE_FRAME = 22; // Backward-compatible left-side default.
+export function edgeRetractedFrame(side){return EDGE_SIDES[side]?.retracted??EDGE_VISIBLE_FRAME;}
+export function availableEdgeSides(pet) {
+  return pet?.edgeSides || [];
+}
+
 
 // Use a deadline instead of queued timeouts so hidden or paused pets never catch up.
 export class RandomAnimations {
@@ -148,6 +190,7 @@ export class PetSprite {
     this.pet=null;this.image=null;this.state='idle';this.started=performance.now();
     this._motion=true;this._gaze=null;this._active=true;this.timer=null;this.stopped=false;
     this.metrics=null;this._mode=undefined;this._fadeAt=-Infinity;this._fadeCanvas=null;this.breathOrigin=performance.now();
+    this._edgeImage=null;this._edge=null;this._edgeTimer=null;this._edgeRaf=null;
     canvas.width=384;canvas.height=416;
     this.visibility=()=>this.refresh();
     if(typeof document!=='undefined')document.addEventListener('visibilitychange',this.visibility);
@@ -186,13 +229,122 @@ export class PetSprite {
   }
   get active(){return this._active;}
   set active(value){if(this._active!==!!value){this._active=!!value;this.started=performance.now();this.refresh();}}
-  async setPet(pet) {
-    if(this.pet?.id===pet.id)return;
-    this.pet=pet;this.image=null;this.metrics=null;this._mode=undefined;this._fadeAt=-Infinity;this.started=performance.now();this.refresh();
+  setPet(pet) {
+    if(this.pet?.id===pet.id)return this._petLoad||Promise.resolve();
+    this.releaseEdge();this._edgeImage=null;this.pet=pet;this.image=null;this.metrics=null;this._mode=undefined;this._fadeAt=-Infinity;this.started=performance.now();this.refresh();
+    this._petLoad=(async()=>{
     if(!pet.builtin){
       const image=new Image();image.crossOrigin='anonymous';image.src=pet.assetUrl;
       await image.decode();
       if(this.pet.id===pet.id){this.image=image;this.metrics=measureAtlas(image);this.refresh();}
+      // The cling artwork is optional: a pet without it keeps the old behaviour.
+      if(pet.edgeUrl){
+        const edge=new Image();edge.crossOrigin='anonymous';edge.src=pet.edgeUrl;
+        try{await edge.decode();if(this.pet.id===pet.id)this._edgeImage=edge;}catch{if(this.pet.id===pet.id)this._edgeImage=null;}
+      }
+    }
+    })();
+    return this._petLoad;
+  }
+  /* ---- edge cling ---- */
+  get edge(){return this._edge;}
+  get edgeReady(){return this._petLoad||Promise.resolve();}
+  get edgeAvailable(){return !!this._edgeImage&&availableEdgeSides(this.pet).length>0;}
+  // side: 'left'|'right'|'top'|'bottom'; starts fully emerged and retracts to
+  // EDGE_VISIBLE_FRAME so a sliver stays on screen instead of vanishing.
+  cling(side,{peek=false}={}){
+    if(!this.edgeAvailable||!EDGE_SIDES[side]||!availableEdgeSides(this.pet).includes(side))return false;
+    if(this._edgeImage.naturalWidth!==EDGE_COLS*EDGE_CELL.w||this._edgeImage.naturalHeight<(EDGE_SIDES[side].block+1)*EDGE_ROWS_PER_SIDE*EDGE_CELL.h)return false;
+    if(this._edge?.side===side)return true;
+    this._edge={side,frame:0,target:edgeRetractedFrame(side),holdUntil:0,settled:false};
+    this._edgeStart=performance.now();
+    this._edgeRaf=null;
+    this.started=performance.now();
+    this._tickEdge();
+    return true;
+  }
+  emergeEdge(){if(!this._edge)return;this._edge.reported=false;this._edge.target=0;this._edge.holdUntil=performance.now()+EDGE_HOLD_EMERGED;this._edgeStart=null;this._tickEdge();}
+  retractEdge(){if(!this._edge)return;this._edge.reported=false;this._edge.target=edgeRetractedFrame(this._edge.side);this._edge.holdUntil=performance.now()+EDGE_HOLD_RETRACTED;this._edgeStart=null;this._tickEdge();}
+  releaseEdge(){
+    if(this._edgeRaf!==null&&typeof cancelAnimationFrame!=='undefined')cancelAnimationFrame(this._edgeRaf);
+    this._edgeRaf=null;this._edge=null;
+    clearTimeout(this._edgeTimer);this._edgeTimer=null;
+    // Restore the normal 384 × 416 canvas before the regular atlas draws again.
+    if(this.canvas.width!==384||this.canvas.height!==416){this.canvas.width=384;this.canvas.height=416;}
+    this._mode=undefined;this.started=performance.now();this.refresh();
+  }
+  _tickEdge(){
+    if(this._edgeRaf!==null&&typeof cancelAnimationFrame!=='undefined')cancelAnimationFrame(this._edgeRaf);
+    this._edgeRaf=null;
+    const e=this._edge;
+    if(!e||this.stopped||!this._active||(typeof document!=='undefined'&&document.hidden))return;
+    const now=performance.now();
+    // Seed the clock on the first frame so a long gap (e.g. after a window resize)
+    // cannot skip the whole sequence in one step.
+    if(this._edgeStart===undefined||this._edgeStart===null){this._edgeStart=now;this._drawEdge(Math.round(e.frame));this._edgeRaf=requestAnimationFrame(()=>this._tickEdge());return;}
+    const dt=Math.min(64,Math.max(0,now-this._edgeStart));this._edgeStart=now;
+    // EDGE_INTERVAL is ms *per frame*, so one frame elapses every EDGE_INTERVAL ms.
+    const step=dt/EDGE_INTERVAL;
+    if(e.frame<e.target)e.frame=Math.min(e.target,e.frame+step);
+    else if(e.frame>e.target)e.frame=Math.max(e.target,e.frame-step);
+    e.settled=Math.abs(e.frame-e.target)<0.001;
+    this._drawEdge(Math.round(e.frame));
+    if(!e.settled){this._edgeRaf=requestAnimationFrame(()=>this._tickEdge());return;}
+    if(!e.reported){e.reported=true;this.onEdgeSettled?.({side:e.side,show:e.target===0});}
+    // Hold at the endpoint, then call again so the pending target is honoured.
+    clearTimeout(this._edgeTimer);
+    const wait=Math.max(0,e.holdUntil-now);
+    this._edgeTimer=setTimeout(()=>{this._edgeTimer=null;this._tickEdge();},Math.max(16,wait));
+  }
+  _edgeScale(){return 2/this.metrics?.s||1;}
+  _drawEdge(frame){
+    const img=this._edgeImage,e=this._edge;
+    if(!img||!e)return;
+    const side=EDGE_SIDES[e.side];
+    // In cling mode the canvas is exactly one cell (384 × 512) and the window is
+    // sized to the same aspect, so the cell maps 1:1 onto the window. The window
+    // position (set by desktop.cjs) is what puts `rim` on the screen edge.
+    // NB: assigning width/height resets the 2D context state, so re-read it after
+    // resizing — a context captured before the resize draws nothing.
+    if(this.canvas.width!==EDGE_CELL.w||this.canvas.height!==EDGE_CELL.h){
+      this.canvas.width=EDGE_CELL.w;this.canvas.height=EDGE_CELL.h;
+      this.ctx=this.canvas.getContext('2d',{willReadFrequently:true});
+    }
+    const ctx=this.ctx;
+    ctx.clearRect(0,0,EDGE_CELL.w,EDGE_CELL.h);
+    // 32 frames per direction sit in 4 rows of 8; `block` picks the direction's rows.
+    const {x,y}=edgeCellXY(e.side,frame);
+    ctx.drawImage(img,x,y,EDGE_CELL.w,EDGE_CELL.h,0,0,EDGE_CELL.w,EDGE_CELL.h);
+    if(e.reportedFrame!==frame){
+      e.reportedFrame=frame;
+      let extent;
+      if(e.side==='top'||e.side==='bottom'){
+        // Cache the visible silhouette once per atlas frame. The larger bubble
+        // travel can then stop ahead of the current hair/halo, including on reversal.
+        if(this._edgeBoundsImage!==img){this._edgeBoundsImage=img;this._edgeBounds=new Map();}
+        const key=e.side+':'+frame;
+        if(!this._edgeBounds.has(key)){
+          const {w,h}=EDGE_CELL,data=ctx.getImageData(0,0,w,h).data;
+          let min=h,max=0;
+          scanTop:for(let py=0;py<h;py++)for(let px=0;px<w;px++)if(data[(py*w+px)*4+3]>8){min=py;break scanTop;}
+          scanBottom:for(let py=h-1;py>=min;py--)for(let px=0;px<w;px++)if(data[(py*w+px)*4+3]>8){max=py+1;break scanBottom;}
+          this._edgeBounds.set(key,min<max?{min,max}:{min:0,max:h});
+        }
+        extent=this._edgeBounds.get(key);
+      }
+      this.onEdgeFrame?.({side:e.side,frame,extent});
+    }
+    if(e.side==='bottom'){
+      // The atlas cuts the torso/hair at the screen rim. Keep the original
+      // petting translate/rotate: continue its last visible row off screen so
+      // that sway reveals matching artwork instead of the transparent cut.
+      // Draw behind the original fingers; measure bubble bounds before this
+      // hidden bleed so bubble placement and visible sprite geometry stay put.
+      ctx.save();
+      ctx.globalCompositeOperation='destination-over';
+      ctx.drawImage(img,x,y+side.rim-1,EDGE_CELL.w,1,
+        0,side.rim,EDGE_CELL.w,EDGE_CELL.h-side.rim);
+      ctx.restore();
     }
   }
   // Draw one atlas cell in device pixels. lift raises the part above the waist seam; the seam row is
@@ -210,6 +362,9 @@ export class PetSprite {
   refresh(){clearTimeout(this.timer);this.timer=null;this.tick(performance.now());}
   tick(now) {
     if(this.stopped||!this._active||(typeof document!=='undefined'&&document.hidden))return;
+    // While clinging, the edge sequence owns the canvas: no breathing, gazing or
+    // action frames may draw over it.
+    if(this._edge)return;
     const elapsed=this.motion?now-this.started:0;
     const gazing=this.motion&&this.gaze&&this.pet?.spriteVersionNumber===2&&this.state==='idle';
     const ang=gazing?(this._smoothAngle??(Math.atan2(this.gaze.x,-this.gaze.y)+Math.PI*2)%(Math.PI*2)):0;

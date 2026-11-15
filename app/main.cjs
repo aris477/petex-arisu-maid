@@ -181,9 +181,10 @@ function configureIPC() {
   const both=()=>[...desktop.windows,settingsWindow,areaWindow].filter(Boolean);
   const settingsOnly = () => [settingsWindow].filter(Boolean);
   handler('state:get',both,function(){return snapshot(this);});
+  handler('pet:cling-failed',petWindows,function(){desktop.detachCling(desktop.fromWindow(this));return true;});
   handler('settings:update', settingsOnly, patch => enqueue(async () => {
     if (!patch || typeof patch !== 'object') throw new Error('Invalid settings.');
-    const permitted = ['petId', 'clickAction', 'size', 'alwaysOnTop', 'motion', 'randomAnimations', 'followCursor', 'launchAtLogin', 'visible', 'behaviour', 'hideFullscreen', 'snapEdges', 'shortcut', 'language','features','primaryVisible','companions','routine','roamArea','favourites','petNames'];
+    const permitted = ['petId', 'clickAction', 'size', 'alwaysOnTop', 'motion', 'randomAnimations', 'followCursor', 'launchAtLogin', 'visible', 'behaviour', 'hideFullscreen', 'snapEdges', 'edgeCling', 'edgeAutoPeek', 'edgePeekEvery', 'edgeStayEvery', 'shortcut', 'language','features','primaryVisible','companions','routine','roamArea','favourites','petNames'];
     const clean = Object.fromEntries(Object.entries(patch).filter(([key]) => permitted.includes(key)));
     if (clean.petId && !pets.some(p => p.id === clean.petId)) throw new Error('That pet is no longer in your collection.');
     if(Object.hasOwn(clean,'behaviour'))clean.randomAnimations=clean.behaviour!=='quiet';
@@ -266,6 +267,10 @@ function configureIPC() {
   handler('pet:press-start',petWindows,function(){desktop.pressStart(desktop.fromWindow(this));});
   handler('pet:press-end',petWindows,function(){desktop.pressEnd(desktop.fromWindow(this));});
   handler('pet:hit',petWindows,function(hit){desktop.hit(desktop.fromWindow(this),hit);});
+  handler('pet:bubble',petWindows,function(payload){return desktop.showBubble(desktop.fromWindow(this),payload);});
+  handler('pet:edge-settled',petWindows,function(payload){return desktop.edgeSettled(desktop.fromWindow(this),payload);});
+  handler('pet:edge-frame',petWindows,function(payload){return desktop.edgeFrame(desktop.fromWindow(this),payload);});
+  handler('pet:bubble-ready',()=>[...desktop.instances.values()].flatMap(p=>p.bubble&&!p.bubble.destroyed?[p.bubble.win]:[]),function(){desktop.bubbleReady(this);});
   handler('pet:stroke',petWindows,function(){return desktop.petting(desktop.fromWindow(this));});
   handler('companions:add',settingsOnly,id=>enqueue(async()=>{
     if(!settings.features.multiPet||settings.companions.length>=MAX_PETS-1||!pets.some(p=>p.id===id))throw Object.assign(new Error(),{key:'petLimit'});
@@ -333,7 +338,7 @@ if (locked) app.whenReady().then(async () => {
   if (snapshot().loginAvailable) settings.launchAtLogin = app.getLoginItemSettings().openAtLogin;
   protocol.handle('pet-asset', async request => {
     const url = new URL(request.url);
-    const match = /^\/([a-f0-9-]{36})\/(spritesheet\.(?:png|webp))$/.exec(url.pathname);
+    const match = /^\/([a-f0-9-]{36})\/((?:spritesheet|edge)\.(?:png|webp))$/.exec(url.pathname);
     if (url.hostname !== 'library' || !match || !pets.some(p => p.id === match[1])) return new Response('Not found', {status: 404});
     const file = path.join(library.petsPath, match[1], match[2]);
     try {

@@ -4,5 +4,14 @@
   "spriteVersionNumber": 2,
   "spritesheetPath": "spritesheet.webp",
   "id": "8a87ef6b-0a63-428c-af2a-a30448d753af",
-  "fingerprint": "9c48304824174e11e014e75d05603918bb85998f23cfaa36ca0b9144684fb3f3"
+  "fingerprint": "9c48304824174e11e014e75d05603918bb85998f23cfaa36ca0b9144684fb3f3",
+  "edge": {
+    "spritesheetPath": "edge.webp",
+    "sides": [
+      "left",
+      "right",
+      "bottom",
+      "top"
+    ]
+  }
 }

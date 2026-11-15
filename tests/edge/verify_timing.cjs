@@ -1,0 +1,60 @@
+// Exercise the real main-process scheduler with a deterministic clock.
+const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+const filename=path.join(__dirname,'verify_cling.cjs');
+const setup=fs.readFileSync(filename,'utf8').split('let pass = 0, fail = 0;')[0];
+const tests=String.raw`
+const fs=require('node:fs');
+let clock=10000,checks=0;
+Object.defineProperty(globalThis,'performance',{value:{now:()=>clock},configurable:true});
+DesktopPets.prototype.schedule=function(){};
+const {bubbleBounds}=require(path.join(ROOT,'app/speech-window.cjs'));
+function ok(value,label){assert.ok(value,label);checks++;}
+for(const side of ['left','right','top','bottom']){
+  clock=10000;cursor.x=900;cursor.y=500;
+  const {dp,p,S,state}=make({edgeAutoPeek:false,edgePeekEvery:8000});
+  state.pets=[{...PETS[0],edgeSides:[side]}];
+  const box=dp.bodyBox(p),b={x:500,y:200,width:dp.fitWidth(p),height:dp.fitHeight(p)};
+  if(side==='left')b.x=AREA.x-box.left;
+  if(side==='right')b.x=AREA.x+AREA.width-box.right;
+  if(side==='top')b.y=AREA.y-box.top;
+  if(side==='bottom')b.y=AREA.y+AREA.height-box.bottom;
+  p.win.setBounds(b);ok(dp.tryGrab(p,b),'grab '+side);
+  const events=[];p.win.webContents.send=(channel,payload)=>events.push({channel,payload,at:clock});
+  const ack=(change={})=>dp.edgeSettled(p,{side,token:p.cling.token,revision:p.cling.revision,show:p.clingPeek,...change});
+  const tickAt=t=>{clock=t;dp.tick();};
+  clock=50000;dp.tick();ok(p.clingPeek===false,'no deadline until animation acknowledges return');
+  ok(!ack({token:0}),'reject stale cling');ok(!ack({revision:-1}),'reject stale transition');
+  ok(ack(),'accept actual retracted endpoint');
+  tickAt(57999);ok(p.clingPeek===false,'wait complete 8 seconds');
+  tickAt(58000);ok(p.clingPeek===true,'emerge after full interval');
+  ok(events.some(e=>e.channel==='pet:cling-peek'&&e.payload.show===true),'deliver emergence');
+  tickAt(59799);ok(p.clingPeek===true,'retain existing emergence duration');
+  tickAt(59800);ok(p.clingPeek===false&&p.cling.retractedAt===null,'retract request does not start interval');
+  tickAt(64000);ok(p.clingPeek===false,'wait while renderer is returning');
+  ok(!ack({show:true}),'reject obsolete emerged endpoint');
+  ok(ack(),'ack return');tickAt(65000);ok(ack(),'duplicate acknowledgement accepted');
+  ok(p.cling.retractedAt===64000,'duplicate does not postpone interval');
+  p.bubble={payload:{text:'still speaking'},hiddenAt:0,update(){},destroy(){}};
+  tickAt(73000);ok(p.clingPeek===false,'visible bubble blocks next cycle');
+  p.bubble.payload=null;p.bubble.hiddenAt=clock;
+  tickAt(80999);ok(p.clingPeek===false,'bubble gets full 8 seconds after disappearance');
+  tickAt(81000);ok(p.clingPeek===true,'resume after both pose and bubble finished');
+  S.edgeAutoPeek=true;
+  const bounds=p.win.getBounds();
+  cursor.x=side==='left'?0:side==='right'?1920:bounds.x+bounds.width/2;
+  cursor.y=side==='top'?0:side==='bottom'?1040:bounds.y+bounds.height/2;
+  tickAt(84000);ok(p.clingPeek===true,'cursor approach can hold a peek');
+  cursor.x=900;cursor.y=500;tickAt(84001);
+  ok(p.clingPeek===false,'cursor departure retracts');ack();
+  S.edgePeekEvery=0;tickAt(100000);ok(p.clingPeek===false,'disabled self peek stays disabled');
+  const pet=p.win.getBounds();
+  const open=bubbleBounds(pet,side,AREA,0),closed=bubbleBounds(pet,side,AREA,31);
+  ok(Math.abs(open.bounds.y-closed.bounds.y)<=(side==='top'||side==='bottom'?100:0),'speech follows over a short travel');
+  if(side==='top'||side==='bottom')ok(Math.abs(open.bounds.y-closed.bounds.y)>0,'speech moves with character');
+  ok(open.bounds.y>=AREA.y&&open.bounds.y+open.bounds.height<=AREA.y+AREA.height,'speech stays in workarea');
+  dp.dispose();
+}
+fs.writeFileSync(path.join(ROOT,'qa/timing.json'),JSON.stringify({checks,status:'passed',interval:8000,measuredFrom:'max(actual retraction acknowledgement, bubble disappearance)'},null,2));
+console.log(checks+' scheduler and stationary-anchor checks passed');process.exit(0);
+`;
+vm.runInThisContext('(function(require){'+setup+tests+'\n})',{filename})(require);

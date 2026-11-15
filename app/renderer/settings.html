@@ -31,8 +31,12 @@
       <label class="setting toggle-setting"><span data-i18n="showPet"></span><input id="visible" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting toggle-setting"><span><span data-i18n="hideFullscreen"></span><span id="fullscreen-description" class="setting-description" hidden></span></span><input id="hideFullscreen" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting toggle-setting"><span data-i18n="snapEdges"></span><input id="snapEdges" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <label class="setting toggle-setting"><span><span data-i18n="edgeCling"></span><span class="setting-description" data-i18n="edgeClingHint"></span></span><input id="edgeCling" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <label class="setting toggle-setting"><span data-i18n="edgeAutoPeek"></span><input id="edgeAutoPeek" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <label class="setting select-setting"><span data-i18n="edgePeekEvery"></span><select id="edgePeekEvery"><option value="0" data-i18n="edgePeekOff"></option><option value="8000" data-i18n="edgePeek8"></option><option value="15000" data-i18n="edgePeek15"></option><option value="30000" data-i18n="edgePeek30"></option></select></label>
       <label class="setting toggle-setting"><span><span data-i18n="shortcut"></span><span id="shortcut-description" class="setting-description"></span></span><input id="shortcut" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting select-setting"><span data-i18n="language"></span><select id="language"></select></label>
+      <label class="setting stay-setting"><span><span data-i18n="edgeStayEvery"></span><span id="edge-stay-hint" class="setting-description" data-i18n="edgeStayHint"></span></span><span class="stay-input"><input id="edgeStayMinutes" type="number" min="0" max="120" step="1" required value="12" data-i18n-aria="edgeStayEvery" aria-describedby="edge-stay-hint"><span data-i18n="edgeStayUnit"></span></span></label>
     </div>
   </section>
   <details id="more"><summary data-i18n="more"></summary>

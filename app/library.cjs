@@ -3,20 +3,24 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const AdmZip = require('adm-zip');
 const sharp = require('sharp');
+const {SIDES:EDGE_SIDES}=require('./renderer/edge-config.js');
 const {languages} = require('./locales.js');
 const {normalizeExtras} = require('./preferences.cjs');
 
 const MAX_IMAGE = 32 * 1024 * 1024;
 const MAX_MANIFEST = 64 * 1024;
 const MAX_BACKUP = 256 * 1024 * 1024;
-const DEFAULTS = Object.freeze({ petId: 'miso', clickAction: 'waving', size: 160, alwaysOnTop: true, motion: true, randomAnimations: true, behaviour: 'calm', followCursor: true, launchAtLogin: false, visible: true, hideFullscreen: false, snapEdges: true, shortcut: true, language: 'auto', position: null });
+const DEFAULTS = Object.freeze({ petId: 'miso', clickAction: 'waving', size: 160, alwaysOnTop: true, motion: true, randomAnimations: true, behaviour: 'calm', followCursor: true, launchAtLogin: false, visible: true, hideFullscreen: false, snapEdges: true, edgeCling: true, edgeAutoPeek: true, edgePeekEvery: 0, edgeStayEvery: 720000, shortcut: true, language: 'auto', position: null });
 const BUILTIN = Object.freeze({ id: 'miso', displayName: 'Miso', description: 'Built-in cat.', builtin: true, spriteVersionNumber: 2 });
 function normalizeSettings(input = {}) {
   const behaviour = ['quiet','calm','playful'].includes(input.behaviour) ? input.behaviour : input.randomAnimations === false ? 'quiet' : 'calm';
   return {
     petId: typeof input.petId === 'string' ? input.petId : DEFAULTS.petId, clickAction: ['waving','jumping','failed','waiting','running','review','running-left','running-right','random'].includes(input.clickAction) ? input.clickAction : (DEFAULTS.clickAction || 'waving'),
     size: Number.isFinite(input.size) ? Math.max(48, Math.min(240, Math.round(input.size))) : DEFAULTS.size,
-    ...Object.fromEntries(['alwaysOnTop', 'motion', 'followCursor', 'launchAtLogin', 'visible', 'hideFullscreen', 'snapEdges', 'shortcut'].map(k => [k, typeof input[k] === 'boolean' ? input[k] : DEFAULTS[k]])),
+    ...Object.fromEntries(['alwaysOnTop', 'motion', 'followCursor', 'launchAtLogin', 'visible', 'hideFullscreen', 'snapEdges', 'edgeCling', 'edgeAutoPeek', 'shortcut'].map(k => [k, typeof input[k] === 'boolean' ? input[k] : DEFAULTS[k]])),
+    // 0 = off; otherwise a period in ms for her to peek out on her own.
+    edgePeekEvery: Number.isFinite(input.edgePeekEvery) ? Math.max(0, Math.min(120000, Math.round(input.edgePeekEvery))) : DEFAULTS.edgePeekEvery,
+    edgeStayEvery: Number.isFinite(input.edgeStayEvery) ? (input.edgeStayEvery<=0?0:Math.max(60000,Math.min(7200000,Math.round(input.edgeStayEvery/60000)*60000))) : DEFAULTS.edgeStayEvery,
     behaviour, randomAnimations: behaviour !== 'quiet' && input.randomAnimations !== false,
     language: input.language === 'auto' || Object.hasOwn(languages,input.language) ? input.language : 'auto',
     position: input.position && Number.isFinite(input.position.x) && Number.isFinite(input.position.y) ? {x: Math.round(input.position.x), y: Math.round(input.position.y)} : null,
@@ -109,7 +113,25 @@ class Library {
         const sprite = await fs.realpath(path.join(this.petsPath, entry.name, manifest.spritesheetPath));
         const root = await fs.realpath(path.join(this.petsPath, entry.name));
         if (path.dirname(sprite) !== root) continue;
-        pets.push({...manifest, id: entry.name, assetUrl: `pet-asset://library/${entry.name}/${manifest.spritesheetPath}`, fingerprint: data.fingerprint});
+        // Optional cling atlas: 8 columns, 4 rows per direction, 384 × 512 cells.
+        let edgeUrl, edgeSides;
+        if (data.edge) {
+          const name = String(data.edge.spritesheetPath || 'edge.webp');
+          const sides = Array.isArray(data.edge.sides) ? data.edge.sides.filter(s => ['left','right','top','bottom'].includes(s)) : [];
+          if (sides.length) {
+            try {
+              const edgePath = await fs.realpath(path.join(this.petsPath, entry.name, name));
+              if (path.dirname(edgePath) !== root) throw new Error('Cling atlas must remain inside the pet directory');
+              const meta=await sharp(edgePath,{limitInputPixels:40000000}).metadata();
+              const complete=sides.filter(side=>meta.width===3072&&meta.height<=8192&&meta.height%2048===0&&meta.height>=(EDGE_SIDES[side].block+1)*2048);
+              if (path.dirname(edgePath) === root && complete.length) {
+                edgeUrl = `pet-asset://library/${entry.name}/${name}`;
+                edgeSides = complete;
+              }
+            } catch { /* Missing cling art only disables the effect. */ }
+          }
+        }
+        pets.push({...manifest, id: entry.name, assetUrl: `pet-asset://library/${entry.name}/${manifest.spritesheetPath}`, fingerprint: data.fingerprint, ...(edgeUrl ? {edgeUrl, edgeSides} : {})});
       } catch { /* A damaged entry must not prevent the rest of the library from loading. */ }
     }
     return pets;

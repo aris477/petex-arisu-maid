@@ -4,3 +4,8 @@ data/
 *.log
 .DS_Store
 Thumbs.db
+
+# Local snapshots and generated test reports
+*.bak*
+qa/
+tests/edge/qa/

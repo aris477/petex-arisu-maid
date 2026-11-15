@@ -39,7 +39,9 @@ function render(next) {
   $('pet-count').textContent=pets.length;
   $('size').value=settings.size;
   $('size-description').textContent=`${settings.size} px`;
-  for(const key of ['alwaysOnTop','motion','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','shortcut'])$(key).checked=settings[key];
+  for(const key of ['alwaysOnTop','motion','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','edgeCling','edgeAutoPeek','shortcut'])$(key).checked=settings[key];
+  if($('edgePeekEvery'))$('edgePeekEvery').value=String(settings.edgePeekEvery||0);
+  $('edgeStayMinutes').value=String((settings.edgeStayEvery??720000)/60000);
   $('launchAtLogin').disabled=!state.loginAvailable;
   $('login-description').hidden=state.loginAvailable;
   $('login-description').textContent=t('installedOnly');
@@ -96,7 +98,9 @@ $('discover').onclick=async()=>{
 $('animation').onchange=()=>{update({clickAction:$('animation').value});playAnimation();};$('play').onclick=playAnimation;$('hero-pet').onclick=playAnimation;
 $('hero-pet').addEventListener('mousemove',event=>{if(state?.settings.followCursor){const rect=$('hero-pet').getBoundingClientRect();hero.gaze={x:(event.clientX-rect.x-rect.width/2)*3,y:(event.clientY-rect.y-rect.height/2)*3};}});
 $('hero-pet').addEventListener('mouseleave',()=>hero.gaze=null);
-for(const key of ['alwaysOnTop','motion','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','shortcut'])$(key).onchange=async()=>{const result=await update({[key]:$(key).checked});if(!result&&state)render(state);};
+for(const key of ['alwaysOnTop','motion','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','edgeCling','edgeAutoPeek','shortcut'])$(key).onchange=async()=>{const result=await update({[key]:$(key).checked});if(!result&&state)render(state);};
+if($('edgePeekEvery'))$('edgePeekEvery').onchange=async()=>{const result=await update({edgePeekEvery:Number($('edgePeekEvery').value)||0});if(!result&&state)render(state);};
+$('edgeStayMinutes').onchange=async()=>{const input=$('edgeStayMinutes');if(!input.reportValidity())return;const result=await update({edgeStayEvery:input.valueAsNumber*60000});if(!result&&state)render(state);};
 $('size').addEventListener('input',()=>{const size=Number($('size').value);$('size-description').textContent=`${size} px`;});
 $('size').addEventListener('change',()=>update({size:Number($('size').value)}));
 $('home').onclick=async()=>{if(await run(async()=>{await api.home();return true;}))toast(t('resetDone'));};
