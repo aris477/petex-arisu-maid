@@ -203,3 +203,6 @@ body.speech-window[data-edge="top"] .speech-bubble::after{top:-7px;bottom:auto;t
 /* Clip on the stationary parent, after the canvas sways. The offscreen torso
    bleed fills the cut without painting below the desktop edge or over a taskbar. */
 body.clinging[data-edge="bottom"]{clip-path:inset(0 0 15.625% 0)}
+/* Keep the screen edge stationary while the original petting motion reveals
+   the atlas's hidden hair and maid-outfit continuation. */
+body.clinging[data-edge="left"]{clip-path:inset(0 0 0 16.6666666667%)}
