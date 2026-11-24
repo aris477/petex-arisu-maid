@@ -40,6 +40,9 @@ const EDGE_OVERSHOOT=64;
 // How long a self-triggered peek remains requested. The interval starts only
 // after the renderer confirms retraction and the previous speech has disappeared.
 const EDGE_SELF_PEEK_MS=1800;
+const MOP_MS=4000;
+// Keep the accepted rightward distance while preserving the source cadence.
+const MOP_SPEED={left:137.6,right:148};
 
 // One native window per pet, one cursor poll and one movement clock for the group.
 class DesktopPets {
@@ -110,7 +113,7 @@ class DesktopPets {
     const ids=settings.features.multiPet?settings.companions.filter(c=>pets.some(p=>p.id===c.petId)).map(c=>c.id):[];
     for(const [id,p] of this.instances)if(id!=='primary'&&!ids.includes(id)){this.instances.delete(id);p.bubble?.destroy();p.win.destroy();}
     for(const id of ids)if(!this.instances.has(id))this.create(id);
-    for(const p of this.instances.values()){p.walking=null;p.drag=null;if(!p.cling)this.place(p,reflow);}
+    for(const p of this.instances.values()){this.cancelMop(p);p.walking=null;p.drag=null;if(!p.cling)this.place(p,reflow);}
     if(!settings.features.toys||!settings.motion||!settings.visible)this.closeToy();
     this.routineResting=settings.features.routines&&resting(settings.routine,new Date(),powerMonitor.getSystemIdleTime());
     this.refresh();
@@ -137,7 +140,8 @@ class DesktopPets {
       if(p.cling)continue;
       const bounds=p.win.getBounds(),area=this.area(p),position=clamp(bounds,area);
       if(position.x!==bounds.x||position.y!==bounds.y){const cfg=this.config(p),winW=Math.max(cfg.size+72,304),winH=Math.ceil(cfg.size*208/192)+180;p.win.setBounds({x:Math.round(position.x),y:Math.round(position.y),width:winW,height:winH});}
-      if(p.walking){const walk=p.walking;p.walking={origin:{...bounds,...position},target:clamp({...bounds,...walk.target},area),started:now,duration:Math.max(1,walk.duration-(now-walk.started))};}
+      if(p.walking?.mopping)this.cancelMop(p);
+      else if(p.walking){const walk=p.walking;p.walking={origin:{...bounds,...position},target:clamp({...bounds,...walk.target},area),started:now,duration:Math.max(1,walk.duration-(now-walk.started))};}
       this.remember(p,false);
     }
     this.refresh();this.onSave();
@@ -178,10 +182,14 @@ class DesktopPets {
         }
       }
       if(p.walking){
-        const w=p.walking,progress=Math.min(1,(now-w.started)/w.duration),eased=progress*progress*(3-2*progress),bounds=p.win.getBounds();
+        const w=p.walking,progress=Math.min(1,(now-w.started)/w.duration),eased=w.mopping?progress:progress*progress*(3-2*progress),bounds=p.win.getBounds();
         const candidate={x:Math.round(w.origin.x+(w.target.x-w.origin.x)*eased),y:Math.round(w.origin.y+(w.target.y-w.origin.y)*eased)};
         const cfg=this.config(p),winW=Math.max(cfg.size+72,304),winH=Math.ceil(cfg.size*208/192)+180,target=freeTarget({x:bounds.x,y:bounds.y,width:winW,height:winH},candidate,this.obstacles(p),this.area(p));p.win.setBounds({x:Math.round(target.x),y:Math.round(target.y),width:winW,height:winH});
-        if(progress>=1||target.x!==candidate.x||target.y!==candidate.y){p.walking=null;this.remember(p);this.onSave();this.schedule();}
+        const blocked=target.x!==candidate.x||target.y!==candidate.y;
+        if(progress>=1||blocked){
+          if(w.mopping&&blocked)this.cancelMop(p);
+          p.walking=null;this.remember(p);this.onSave();this.schedule();
+        }
       }
       p.bubble?.update();
       const b=p.win.getBounds(),inside=cursor.x>=b.x&&cursor.y>=b.y&&cursor.x<b.x+b.width&&cursor.y<b.y+b.height;
@@ -219,8 +227,50 @@ class DesktopPets {
     if(now-this.lastAmbient>=1000){this.lastAmbient=now;this.ambient(now);}
   }
   obstacles(p){return [...this.instances.values()].filter(other=>other!==p&&this.active(other)).map(other=>other.win.getBounds());}
+  mopUrl(p,direction){
+    return direction==='left'?this.pet(p)?.mopLeftUrl:direction==='right'?this.pet(p)?.mopRightUrl:null;
+  }
+  requestMop(p,direction,automatic=false){
+    if(!this.active(p)||!this.config(p).motion||p.drag||p.cling||!this.mopUrl(p,direction)||p.walking?.mopping)return;
+    if(automatic&&!this.allowsAutomaticMop(p,direction))return;
+    if(p.mopRequest?.expires>performance.now())return;
+    this.cancelSocial();p.walking=null;
+    const token=(p.mopToken??0)+1;
+    p.mopToken=token;
+    p.mopRequest={token,direction,automatic,expires:performance.now()+5000};
+    p.win.webContents.send('pet:action',{name:'mop-'+direction,token,automatic});
+    this.schedule();
+  }
+  allowsAutomaticMop(p,direction){
+    const config=this.config(p);
+    return config.randomAnimations&&config.behaviour!=='quiet'&&config.randomActionWeights?.['mop-'+direction]>0;
+  }
+  startMop(p,token){
+    const request=p?.mopRequest;
+    if(!request||request.token!==token)return 0;
+    p.mopRequest=null;
+    const {direction,automatic}=request;
+    if(request.expires<performance.now()||!this.active(p)||!this.config(p).motion||p.drag||p.cling||!this.mopUrl(p,direction))return 0;
+    if(automatic&&!this.allowsAutomaticMop(p,direction))return 0;
+    const sign=direction==='left'?-1:1;
+    const origin=p.win.getBounds(),speed=MOP_SPEED[direction]*this.config(p).size/384;
+    const end=freeTarget(origin,{x:origin.x+sign*Math.round(speed*MOP_MS/1000),y:origin.y},this.obstacles(p),this.area(p));
+    const duration=Math.min(MOP_MS,sign*(end.x-origin.x)*1000/speed);
+    if(end.y!==origin.y||duration<240)return 0;
+    const started=performance.now();
+    p.walking={origin,target:end,started,duration,mopping:true};
+    p.busyUntil=started+duration;p.activity='mop-'+direction;this.schedule();
+    return duration;
+  }
+  cancelMop(p){
+    p.mopRequest=null;
+    if(!p.walking?.mopping)return;
+    p.walking=null;p.busyUntil=0;
+    p.win.webContents.send('pet:action',{name:'idle',silent:true});
+  }
   move(p,target,duration,name) {
     if(!this.active(p)||p.drag||!this.config(p).motion)return;
+    if(p.walking?.mopping)return;
     const origin=p.win.getBounds(),end=freeTarget(origin,target,this.obstacles(p),this.area(p));
     if(end.x===origin.x&&end.y===origin.y)return;
     p.walking={origin,target:end,started:performance.now(),duration};p.busyUntil=performance.now()+duration;
@@ -236,6 +286,7 @@ class DesktopPets {
     // While clinging she is tucked into the edge and the renderer refuses to draw
     // actions, so performing one would only yank her off the edge for nothing.
     if(!p||!this.active(p)||!this.config(p).motion||p.drag||p.cling)return;
+    p.mopRequest=null;
     if(!coordinated){this.cancelSocial();p.walking=null;}
     p.busyUntil=performance.now()+(duration||3600);p.activity=name;p.win.webContents.send('pet:action',duration?{name,duration}:name);this.schedule();
   }
@@ -243,6 +294,7 @@ class DesktopPets {
     const target=p||this.primary;
     if(!target||!this.active(target))return;
     if(payload?.action&&!target.drag&&!target.cling&&this.config(target).motion){
+      target.mopRequest=null;
       this.cancelSocial();target.walking=null;
       target.busyUntil=performance.now()+(payload.actionDuration||3600);
       target.activity=payload.action;
@@ -264,7 +316,7 @@ class DesktopPets {
   }
   pressStart(p) {
     if(!this.active(p))return;
-    this.cancelSocial();p.walking=null;
+    this.cancelSocial();p.mopRequest=null;p.walking=null;
     // While clinging this press might still turn out to be a plain click ("呼びかけ"),
     // which must NOT move her. So do not detach here: the first real drag movement
     // does it (see tick), keeping her body exactly where it was.
@@ -460,8 +512,16 @@ class DesktopPets {
   hide(p) {const {settings}=this.getState();if(p.id==='primary'){if(settings.features.multiPet)settings.primaryVisible=false;else settings.visible=false;}else{const item=settings.companions.find(c=>c.id===p.id);if(item)item.visible=false;}this.refresh();this.onSave();}
   pet(p) {const {pets}=this.getState();return pets.find(pet=>pet.id===this.config(p).petId)||pets[0];}
   petting(p) {
-    const now=performance.now();if(now-p.lastPetting<2500||p.drag||!this.active(p)||!this.config(p).motion)return false;
-    p.lastPetting=now;this.action(p,'waving');p.win.webContents.send('pet:stroke');return true;
+    if(!p||p.drag||!this.active(p)||!this.config(p).motion)return false;
+    const pet=this.pet(p), now=performance.now();
+    const duration=pet?.pettingUrl&&!p.cling?5250:2500;
+    if(now-p.lastPetting<(p.pettingCooldown??2500))return false;
+    p.lastPetting=now;p.pettingCooldown=duration;
+    if(pet?.pettingV4){
+      if(!p.cling)this.action(p,'petting3',false,pet.pettingUrl?duration:undefined);
+    }else this.action(p,'waving');
+    p.win.webContents.send('pet:stroke',{sway:!pet?.pettingV4});
+    return true;
   }
   cancelSocial() {if(this.social){for(const id of this.social.ids){const p=this.instances.get(id);if(p){if(p.walking)this.remember(p);p.walking=null;p.activity=null;p.win.webContents.send('pet:social-end');}}this.social=null;}this.nextSocial=performance.now()+25000+Math.random()*35000;}
   socialPlan(kind,force=false) {

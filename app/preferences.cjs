@@ -1,12 +1,13 @@
 const crypto = require('node:crypto');
 const FEATURES = Object.freeze(Object.fromEntries(['multiPet','interactions','personalities','roaming','toys','petting','routines','layouts','libraryTools'].map(key=>[key,false])));
 const MAX_PETS = 4;
+const MAX_PET_SIZE = 320;
 const plain = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const text = (value,max=80) => typeof value === 'string' ? value.trim().slice(0,max) : '';
 const number = (value,min,max,fallback) => Number.isFinite(value) ? Math.max(min,Math.min(max,value)) : fallback;
 const position = value => Number.isFinite(value?.x)&&Number.isFinite(value?.y) ? {x:Math.round(value.x),y:Math.round(value.y)} : null;
 function profile(value={}) {
-  return {size:Math.round(number(value.size,48,240,160)),behaviour:['quiet','calm','playful'].includes(value.behaviour)?value.behaviour:'calm',followCursor:value.followCursor!==false};
+  return {size:Math.round(number(value.size,48,MAX_PET_SIZE,160)),behaviour:['quiet','calm','playful'].includes(value.behaviour)?value.behaviour:'calm',followCursor:value.followCursor!==false};
 }
 function companions(value) {
   const ids=new Set(['primary']);
@@ -35,4 +36,4 @@ function resting(routine,date,idleSeconds) {
   return night||idleSeconds>=routine.idleMinutes*60;
 }
 function newCompanion(petId,settings) { return {id:crypto.randomUUID(),petId,...profile(settings),visible:true,position:null}; }
-module.exports={FEATURES,MAX_PETS,profile,companions,placement,roamArea,normalizeExtras,resting,newCompanion};
+module.exports={FEATURES,MAX_PETS,MAX_PET_SIZE,profile,companions,placement,roamArea,normalizeExtras,resting,newCompanion};

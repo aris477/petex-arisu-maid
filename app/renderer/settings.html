@@ -21,11 +21,18 @@
     <div class="import-note"><span class="drop-label" data-i18n="dropFolder"></span><button id="import-file" class="text-button" data-i18n="importFile"></button><span class="file-types">ZIP · JSON · PNG · WebP</span></div>
   </section>
   <section aria-labelledby="preferences-title"><div class="section-heading"><h2 id="preferences-title" data-i18n="settingsHeading"></h2></div>
-    <div class="preferences-grid">
-      <div class="setting size-setting"><label for="size" data-i18n="size"></label><input id="size" type="range" min="48" max="240" step="8" value="160" data-i18n-aria="size"><output id="size-description" for="size">160 px</output></div>
+    <div class="preferences-grid main-preferences">
+      <div class="setting size-setting"><label for="size" data-i18n="size"></label><input id="size" type="range" min="48" max="320" step="8" value="160" data-i18n-aria="size"><output id="size-description" for="size">160 px</output></div>
       <label class="setting toggle-setting"><span data-i18n="alwaysOnTop"></span><input id="alwaysOnTop" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting toggle-setting"><span data-i18n="animations"></span><input id="motion" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting select-setting"><span data-i18n="behaviour"></span><select id="behaviour"><option value="quiet" data-i18n="quiet"></option><option value="calm" data-i18n="calm"></option><option value="playful" data-i18n="playful"></option></select></label>
+      <label class="setting toggle-setting"><span data-i18n="randomActionBubbles"></span><input id="randomActionBubbles" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <details class="action-weights">
+        <summary data-i18n="actionWeights" data-i18n-title="actionWeightsHint" aria-describedby="action-weights-hint"></summary>
+        <span id="action-weights-hint" data-i18n="actionWeightsHint" hidden></span>
+        <div id="action-weight-fields" class="action-weight-fields"></div>
+        <button id="reset-action-weights" type="button" class="text-button" data-i18n="resetActionWeights"></button>
+      </details>
       <label class="setting toggle-setting"><span><span data-i18n="followCursor"></span><span id="gaze-description" class="setting-description" hidden></span></span><input id="followCursor" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting toggle-setting"><span><span data-i18n="login"></span><span id="login-description" class="setting-description" hidden></span></span><input id="launchAtLogin" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting toggle-setting"><span data-i18n="showPet"></span><input id="visible" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>

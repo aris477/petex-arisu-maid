@@ -38,6 +38,7 @@ canvas:active{cursor:grabbing}
   transition:opacity .22s ease,transform .24s cubic-bezier(.22,1.28,.36,1);
 }
 .speech-bubble[hidden]{display:none!important}
+.speech-bubble.is-cleaning{width:248px;text-align:center}
 .speech-bubble.is-entering{opacity:0;transform:translateX(-50%) translateY(8px) scale(.92)}
 .speech-bubble.is-leaving{opacity:0;transform:translateX(-50%) translateY(5px) scale(.95)}
 

@@ -5,23 +5,25 @@ const AdmZip = require('adm-zip');
 const sharp = require('sharp');
 const {SIDES:EDGE_SIDES}=require('./renderer/edge-config.js');
 const {languages} = require('./locales.js');
-const {normalizeExtras} = require('./preferences.cjs');
+const {MAX_PET_SIZE,normalizeExtras} = require('./preferences.cjs');
+const {normalizeActionWeights} = require('./renderer/random-action-weights.mjs');
 
 const MAX_IMAGE = 32 * 1024 * 1024;
 const MAX_MANIFEST = 64 * 1024;
 const MAX_BACKUP = 256 * 1024 * 1024;
-const DEFAULTS = Object.freeze({ petId: 'miso', clickAction: 'waving', size: 160, alwaysOnTop: true, motion: true, randomAnimations: true, behaviour: 'calm', followCursor: true, launchAtLogin: false, visible: true, hideFullscreen: false, snapEdges: true, edgeCling: true, edgeAutoPeek: true, edgePeekEvery: 0, edgeStayEvery: 720000, shortcut: true, language: 'auto', position: null });
+const DEFAULTS = Object.freeze({ petId: 'miso', clickAction: 'waving', size: 160, alwaysOnTop: true, motion: true, randomAnimations: true, randomActionBubbles: true, behaviour: 'calm', followCursor: true, launchAtLogin: false, visible: true, hideFullscreen: false, snapEdges: true, edgeCling: true, edgeAutoPeek: true, edgePeekEvery: 0, edgeStayEvery: 720000, shortcut: true, language: 'auto', position: null });
 const BUILTIN = Object.freeze({ id: 'miso', displayName: 'Miso', description: 'Built-in cat.', builtin: true, spriteVersionNumber: 2 });
 function normalizeSettings(input = {}) {
   const behaviour = ['quiet','calm','playful'].includes(input.behaviour) ? input.behaviour : input.randomAnimations === false ? 'quiet' : 'calm';
   return {
-    petId: typeof input.petId === 'string' ? input.petId : DEFAULTS.petId, clickAction: ['waving','jumping','failed','waiting','running','review','running-left','running-right','random'].includes(input.clickAction) ? input.clickAction : (DEFAULTS.clickAction || 'waving'),
-    size: Number.isFinite(input.size) ? Math.max(48, Math.min(240, Math.round(input.size))) : DEFAULTS.size,
-    ...Object.fromEntries(['alwaysOnTop', 'motion', 'followCursor', 'launchAtLogin', 'visible', 'hideFullscreen', 'snapEdges', 'edgeCling', 'edgeAutoPeek', 'shortcut'].map(k => [k, typeof input[k] === 'boolean' ? input[k] : DEFAULTS[k]])),
+    petId: typeof input.petId === 'string' ? input.petId : DEFAULTS.petId, clickAction: ['waving','jumping','failed','waiting','running','review','cleaning10','running-left','running-right','random'].includes(input.clickAction) ? input.clickAction : (DEFAULTS.clickAction || 'waving'),
+    size: Number.isFinite(input.size) ? Math.max(48, Math.min(MAX_PET_SIZE, Math.round(input.size))) : DEFAULTS.size,
+    ...Object.fromEntries(['alwaysOnTop', 'motion', 'randomActionBubbles', 'followCursor', 'launchAtLogin', 'visible', 'hideFullscreen', 'snapEdges', 'edgeCling', 'edgeAutoPeek', 'shortcut'].map(k => [k, typeof input[k] === 'boolean' ? input[k] : DEFAULTS[k]])),
     // 0 = off; otherwise a period in ms for her to peek out on her own.
     edgePeekEvery: Number.isFinite(input.edgePeekEvery) ? Math.max(0, Math.min(120000, Math.round(input.edgePeekEvery))) : DEFAULTS.edgePeekEvery,
     edgeStayEvery: Number.isFinite(input.edgeStayEvery) ? (input.edgeStayEvery<=0?0:Math.max(60000,Math.min(7200000,Math.round(input.edgeStayEvery/60000)*60000))) : DEFAULTS.edgeStayEvery,
     behaviour, randomAnimations: behaviour !== 'quiet' && input.randomAnimations !== false,
+    randomActionWeights: normalizeActionWeights(input.randomActionWeights),
     language: input.language === 'auto' || Object.hasOwn(languages,input.language) ? input.language : 'auto',
     position: input.position && Number.isFinite(input.position.x) && Number.isFinite(input.position.y) ? {x: Math.round(input.position.x), y: Math.round(input.position.y)} : null,
     ...normalizeExtras(input),
@@ -131,7 +133,76 @@ class Library {
             } catch { /* Missing cling art only disables the effect. */ }
           }
         }
-        pets.push({...manifest, id: entry.name, assetUrl: `pet-asset://library/${entry.name}/${manifest.spritesheetPath}`, fingerprint: data.fingerprint, ...(edgeUrl ? {edgeUrl, edgeSides} : {})});
+        let sadUrl;
+        if (data.sadV15 === true) {
+          try {
+            const file = await fs.realpath(path.join(root, 'sad-v15.webp'));
+            if (path.dirname(file) === root) {
+              const meta = await sharp(file, {limitInputPixels: 3072*5824}).metadata();
+              if (meta.width === 3072 && meta.height === 5824 && meta.hasAlpha)
+                sadUrl = `pet-asset://library/${entry.name}/sad-v15.webp`;
+            }
+          } catch { /* The original sad animation remains available. */ }
+        }
+        let lookUrl;
+        if (data.lookV4 === true) {
+          try {
+            const file = await fs.realpath(path.join(root, 'look-v4.webp'));
+            if (path.dirname(file) === root) {
+              const meta = await sharp(file, {limitInputPixels: 3072*6656}).metadata();
+              if (meta.width === 3072 && meta.height === 6656 && meta.hasAlpha)
+                lookUrl = `pet-asset://library/${entry.name}/look-v4.webp`;
+            }
+          } catch { /* Fall back to the main atlas. */ }
+        }
+        let waveUrl;
+        if (data.reference2Wave === true) {
+          try {
+            const file = await fs.realpath(path.join(root, 'waving.webp'));
+            if (path.dirname(file) === root) {
+              const meta = await sharp(file, {limitInputPixels: 3072*5408}).metadata();
+              if (meta.format === 'webp' && meta.width === 3072 && meta.height === 5408 && meta.hasAlpha && (meta.pages ?? 1) === 1)
+                waveUrl = `pet-asset://library/${entry.name}/waving.webp`;
+            }
+          } catch { /* Fall back to the main atlas. */ }
+        }
+        const pettingV4 = data.pettingV4 === true;
+        let pettingUrl;
+        if (pettingV4) {
+          try {
+            const file = await fs.realpath(path.join(root, 'petting-v4.webp'));
+            if (path.dirname(file) === root) {
+              const meta = await sharp(file, {limitInputPixels: 3072*8320}).metadata();
+              if (meta.format === 'webp' && meta.width === 3072 && meta.height === 8320 && meta.hasAlpha && (meta.pages ?? 1) === 1)
+                pettingUrl = `pet-asset://library/${entry.name}/petting-v4.webp`;
+            }
+          } catch { /* Keep the stroke response if the optional atlas is missing. */ }
+        }
+        let cleaningUrl;
+        if (data.cleaning10 === true) {
+          try {
+            const file = await fs.realpath(path.join(root, 'cleaning10.webp'));
+            if (path.dirname(file) === root) {
+              const meta = await sharp(file, {limitInputPixels: 4608*7488}).metadata();
+              if (meta.format === 'webp' && meta.width === 4608 && meta.height === 7488 && meta.hasAlpha && (meta.pages ?? 1) === 1)
+                cleaningUrl = `pet-asset://library/${entry.name}/cleaning10.webp`;
+            }
+          } catch { /* Omit the optional action if the file is unavailable. */ }
+        }
+        const mopAtlases={};
+        for(const [direction,flag] of [['left','mopLeft'],['right','mopRight']]) {
+          if(data[flag]!==true)continue;
+          try {
+            const name='mop-'+direction+'.webp';
+            const file = await fs.realpath(path.join(root, name));
+            if (path.dirname(file) === root) {
+              const meta = await sharp(file, {limitInputPixels:3840*6240}).metadata();
+              if(meta.format==='webp'&&meta.width===3840&&meta.height===6240&&meta.hasAlpha&&(meta.pages??1)===1)
+                mopAtlases[flag+'Url']=`pet-asset://library/${entry.name}/${name}`;
+            }
+          } catch { /* Omit the action if the optional atlas is unavailable. */ }
+        }
+        pets.push({...manifest, id: entry.name, assetUrl: `pet-asset://library/${entry.name}/${manifest.spritesheetPath}`, fingerprint: data.fingerprint, ...(edgeUrl ? {edgeUrl, edgeSides} : {}), ...(sadUrl ? {sadUrl} : {}), ...(lookUrl ? {lookUrl} : {}), ...(waveUrl ? {waveUrl} : {}), ...(pettingV4 ? {pettingV4, pettingUrl} : {}), ...(cleaningUrl ? {cleaningUrl} : {}), ...mopAtlases});
       } catch { /* A damaged entry must not prevent the rest of the library from loading. */ }
     }
     return pets;

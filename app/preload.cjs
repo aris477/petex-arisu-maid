@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld('pedex', {
   hit: value => invoke('pet:hit', value),
   clingFailed: () => invoke('pet:cling-failed'),
   wander: (name, duration) => invoke('pet:wander', name, duration),
+  mopReady: token => invoke('pet:mop-ready',token),
+  requestAutomaticMop: direction => invoke('pet:mop-auto',direction),
   stroke: () => invoke('pet:stroke'),
   addCompanion: id => invoke('companions:add',id),
   removeCompanion: id => invoke('companions:remove',id),

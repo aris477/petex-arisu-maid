@@ -1,5 +1,6 @@
 import {PetSprite, ANIMATIONS, RandomAnimations, edgeHitBand} from './sprite.js';
 import {EdgeDialogue} from './edge-speech.js';
+import {ACTIONS} from './random-action-weights.mjs';
 const api=window.pedex,canvas=document.getElementById('pet'),sprite=new PetSprite(canvas);
 const bubbleEl=document.getElementById('speech-bubble'),tagEl=document.getElementById('speech-tag'),badgeEl=document.getElementById('speech-badge-text'),metaEl=document.getElementById('speech-meta'),textEl=document.getElementById('speech-text');
 const randomAnimations=new RandomAnimations();
@@ -15,6 +16,28 @@ const CLING_GRAB_BAND=32;
 let bubbleTimer=null,bubbleHideTimer=null,lastLine='',welcomed=false;
 let bubblePageTimers=[],speechSequence=0,taskSpeechUntil=0,edgePending=[],edgeRetryTimer=null,recentEdgeToss=null;
 let currentSpeech=null,speechVisibleUntil=0;
+const CLEANING_CUES=[
+  {at:2400,lines:['嘿咻、嘿咻——','老师别动哦，我擦到这边了','唔……卡住了，再等一下下']},
+  {at:5700,lines:['亮晶晶的......看得见爱丽丝吗','擦完啦......可以摸摸爱丽丝的头吗？','这样……老师就能一直看清爱丽丝了(´,,•ω•,,)']},
+];
+const MOP_LINES=[
+  '发现污渍，进入战斗！',
+  '打扫、打扫～',
+  '女仆等级，提升了！',
+  '只是……在补充女仆能量！',
+  '老师，爱丽丝拖得好不好呀？',
+  '扫除任务，完成！'
+];
+let mopSpeechTimer=null;
+let cleaningCue=-1,cleaningAutomatic=false,preloadingCleaning=null,actionRequest=0;
+sprite.onCleaningProgress=elapsed=>{
+  const index=CLEANING_CUES.findLastIndex(cue=>elapsed>=cue.at);
+  if(index<0||index===cleaningCue)return;
+  cleaningCue=index;
+  if(performance.now()<taskSpeechUntil||(cleaningAutomatic&&!settings?.randomActionBubbles))return;
+  const {lines}=CLEANING_CUES[index],next=CLEANING_CUES[index+1];
+  showSpeech({text:lines[Math.floor(Math.random()*lines.length)],cleaning:true,duration:next?next.at-elapsed+260:3400});
+};
 const edgeDialogue=new EdgeDialogue({speak:opts=>showSpeech(opts)});
 const DOCK_CATEGORIES=new Set(['edge_dock','edge_night','edge_toss']);
 
@@ -117,6 +140,8 @@ function pickLine(kind='waving'){
 function showSpeech(opts={}){
   if(!bubbleEl)return false;
   const now=performance.now();
+  const keepOpen=((opts.cleaning&&currentSpeech?.cleaning)||(opts.mop&&currentSpeech?.mop))
+    &&!bubbleEl.hidden&&!bubbleEl.classList.contains('is-leaving');
   if(opts.edgeCategory){
     if(taskSpeechUntil>now){
       if(opts.required||opts.manual||DOCK_CATEGORIES.has(opts.edgeCategory))queueEdgeSpeech(opts);
@@ -149,6 +174,7 @@ function showSpeech(opts={}){
   }
   textEl.textContent=text;
   bubbleEl.classList.remove('is-task-done','is-task-warn','is-leaving');
+  bubbleEl.classList.toggle('is-cleaning',Boolean(opts.cleaning));
   if(opts.kind==='done')bubbleEl.classList.add('is-task-done');
   else if(opts.kind==='warn')bubbleEl.classList.add('is-task-warn');
   bubbleEl.hidden=false;
@@ -167,8 +193,11 @@ function showSpeech(opts={}){
   edgeDialogue.recordSpeech();
   if(opts.edgeCategory&&opts.edgeCategory!=='edge_stay')edgeDialogue.history.set(rawText,now);
   if(DOCK_CATEGORIES.has(opts.edgeCategory))edgeDialogue.firstDock=false;
-  bubbleEl.classList.add('is-entering');
-  requestAnimationFrame(()=>{requestAnimationFrame(()=>{if(sequence===speechSequence)bubbleEl.classList.remove('is-entering');});});
+  if(keepOpen)bubbleEl.classList.remove('is-entering');
+  else{
+    bubbleEl.classList.add('is-entering');
+    requestAnimationFrame(()=>{requestAnimationFrame(()=>{if(sequence===speechSequence)bubbleEl.classList.remove('is-entering');});});
+  }
   bubbleTimer=setTimeout(()=>{
     bubbleEl.classList.add('is-leaving');
     bubbleHideTimer=setTimeout(()=>{bubbleEl.hidden=true;bubbleEl.classList.remove('is-leaving');},240);
@@ -188,30 +217,88 @@ function plan() {
   if(now<socialUntil){behaviourTimer=setTimeout(plan,Math.max(1,socialUntil-now));return;}
   if(now<actionUntil){behaviourTimer=setTimeout(plan,Math.max(1,actionUntil-now));return;}
   if(sprite.state!=='idle'){sprite.action('idle');actionUntil=0;}
-  const next=randomAnimations.next(selectedPet,now,settings.randomAnimations,false,settings.behaviour);
+  const next=randomAnimations.next(selectedPet,now,settings.randomAnimations,false,settings.behaviour,
+    sprite.hasSad,sprite.hasLook,sprite.hasWave,settings.randomActionWeights,{cleaning10:sprite.hasCleaning});
   if(next){
+    const definition=ACTIONS[next.name];
+    if(definition.mop){
+      api.requestAutomaticMop(definition.mop).catch(()=>{});
+      behaviourTimer=setTimeout(plan,Math.max(1,randomAnimations.nextAt-now));
+      return;
+    }
+    if(next.name==='cleaning10')beginCleaning(true);
     sprite.action(next.name);sprite.gaze=null;actionUntil=now+next.duration;
-    if(next.name.startsWith('running-'))api.wander(next.name,next.duration).catch(()=>{});
+    if(next.name!=='cleaning10'&&settings.randomActionBubbles&&now>=taskSpeechUntil)showSpeech({action:next.name});
+    if(definition.travel)api.wander(next.name,next.duration).catch(()=>{});
   }
   const deadline=next?actionUntil:randomAnimations.nextAt;
   if(deadline!==null)behaviourTimer=setTimeout(plan,Math.max(1,deadline-now));
 }
 function resetBehaviour(){randomAnimations.reset();plan();}
-function action(value,fromPress=false,withBubble=true){
+function beginCleaning(automatic){
+  cleaningAutomatic=automatic;cleaningCue=-1;
+  if(currentSpeech?.cleaning){
+    ++speechSequence;clearTimeout(bubbleTimer);clearTimeout(bubbleHideTimer);
+    bubbleEl.hidden=true;currentSpeech=null;speechVisibleUntil=0;
+  }
+}
+function stopMopSpeech(){
+  clearTimeout(mopSpeechTimer);
+  mopSpeechTimer=null;
+}
+function beginMopSpeech(){
+  stopMopSpeech();
+  const text=MOP_LINES[Math.floor(Math.random()*MOP_LINES.length)];
+  function speak(){
+    mopSpeechTimer=null;
+    if(!active||!settings?.motion||dragging||clinging)return;
+    const wait=taskSpeechUntil-performance.now();
+    if(wait>0){mopSpeechTimer=setTimeout(speak,wait+20);return;}
+    showSpeech({text,mop:true,duration:2600});
+  }
+  speak();
+}
+async function action(value,fromPress=false,withBubble=true){
   const name=typeof value==='string'?value:value?.name;
   const silent=typeof value==='object'&&value?.silent;
-  if(!settings?.motion||!active||!ANIMATIONS[name]||dragging||clinging||(down&&!fromPress))return;
-  sprite.action(name);sprite.gaze=null;
-  actionUntil=performance.now()+(value?.duration||ANIMATIONS[name].durations.reduce((a,b)=>a+b,0)*(ANIMATIONS[name].cycles||2));
-  if(withBubble&&!silent){
+  const petting=name==='petting3';
+  const cleaning=name==='cleaning10';
+  const mopping=name==='mop-left'||name==='mop-right';
+  const canAct=()=>settings?.motion&&active&&!dragging&&!clinging&&(!down||fromPress);
+  if(!canAct()||(!petting&&!cleaning&&!mopping&&!ANIMATIONS[name]))return;
+  if((cleaning||mopping)&&sprite.state===name)return;
+  const request=++actionRequest;
+  let mopDuration;
+  if(cleaning){
+    const id=selectedPet.id;
+    const ready=await sprite.prepareCleaning();
+    if(request!==actionRequest||id!==selectedPet.id||!canAct())return;
+    if(!ready){if(fromPress)action('waving',true,withBubble);return;}
+    beginCleaning(false);
+  }
+  if(mopping){
+    const id=selectedPet.id;
+    const ready=await sprite.prepareMop(name);
+    if(!ready||request!==actionRequest||id!==selectedPet.id||!canAct())return;
+    mopDuration=await api.mopReady(value?.token).catch(()=>0);
+    if(!mopDuration||request!==actionRequest||id!==selectedPet.id||!canAct())return;
+  }
+  const playback=petting&&!sprite.hasPetting?'waving':name;
+  sprite.action(playback,mopDuration);sprite.gaze=null;
+  actionUntil=performance.now()+(mopDuration||(playback===name&&value?.duration)||sprite.actionDuration(playback));
+  const automaticMop=mopping&&value?.automatic===true;
+  if(mopping&&withBubble&&!silent&&(!automaticMop||settings.randomActionBubbles))beginMopSpeech();
+  else stopMopSpeech();
+  if(withBubble&&!silent&&!petting&&!cleaning&&!mopping){
     showSpeech({badge:'✦ 爱丽丝',text:pickLine(name),duration:3200});
   }
-  resetBehaviour();
+  if(automaticMop)plan();else resetBehaviour();
 }
 function render(state){
   document.documentElement.lang=state.locale;canvas.setAttribute('aria-label',globalThis.PetexI18n.translate(state.locale,'petInstructions'));
   const next=state.settings,pet=state.pets.find(p=>p.id===next.petId)||state.pets[0];
   const changed=pet.id!==selectedPet?.id||next.motion!==settings?.motion||state.petActive!==active||next.randomAnimations!==settings?.randomAnimations||next.behaviour!==settings?.behaviour;
+  const weightsChanged=Object.entries(next.randomActionWeights??{}).some(([name,weight])=>weight!==settings?.randomActionWeights?.[name]);
   if(down&&(!state.petActive||pet.id!==selectedPet?.id))finishPointer(null,true);
   if(!state.petActive||pet.id!==selectedPet?.id)stopEdgeDialogue();
   settings=next;selectedPet=pet;active=state.petActive;
@@ -221,17 +308,25 @@ function render(state){
   if(next?.size&&!clinging)setCanvasSize(next.size);
   sprite.active=active;sprite.motion=settings.motion;
   sprite.setPet(pet).catch(()=>sprite.setPet(state.pets[0]));
-  if(changed){actionUntil=0;sprite.action('idle');resetBehaviour();}
+  if(active&&next.motion&&next.randomAnimations&&next.randomActionWeights?.cleaning10>0&&pet.cleaningUrl&&!sprite.hasCleaning){
+    const loading=sprite.prepareCleaning();
+    if(loading!==preloadingCleaning){
+      preloadingCleaning=loading;
+      loading.then(ready=>{if(ready&&selectedPet.id===pet.id&&behaviourTimer===null)plan();});
+    }
+  }
+  if(changed){stopMopSpeech();++actionRequest;actionUntil=0;sprite.action('idle');resetBehaviour();}
+  else if(weightsChanged)plan();
   if(active&&!welcomed){
     welcomed=true;
-    setTimeout(()=>!clinging&&showSpeech({badge:'✦ 爱丽丝',text:'“邦邦咔邦～！女仆爱丽丝已就位，点击我可以对话，任务完成也会第一时间提醒老师哦！”',duration:5200}),450);
+    setTimeout(()=>!clinging&&!currentSpeech?.mop&&showSpeech({badge:'✦ 爱丽丝',text:'“邦邦咔邦～！女仆爱丽丝已就位，点击我可以对话，任务完成也会第一时间提醒老师哦！”',duration:5200}),450);
   }
 }
 api.onState(render);api.getState().then(render);
 api.onAction(value=>action(value));
 api.onSpeech(payload=>showSpeech(payload));
-api.onStroke(()=>{
-  canvas.classList.remove('petted');void canvas.offsetWidth;canvas.classList.add('petted');
+api.onStroke(({sway}={sway:true})=>{
+  if(sway){canvas.classList.remove('petted');void canvas.offsetWidth;canvas.classList.add('petted');}
   showSpeech({badge:'✦ 好感度 UP',text:pickLine('stroke'),duration:3200});
 });
 canvas.addEventListener('animationend',()=>canvas.classList.remove('petted'));
@@ -273,6 +368,7 @@ api.onCling(async({side,token})=>{
   pendingCling=null;
   edgeToken=token;edgeRevision=0;
   if(!sprite.cling(side)){api.clingFailed().catch(()=>{});return;}
+  stopMopSpeech();
   clinging=side;
   document.body.dataset.edge=side;
   document.body.classList.add('clinging');
@@ -299,6 +395,7 @@ api.onCursor(cursor=>{
   const rect=canvas.getBoundingClientRect(),x=cursor.x-rect.x,y=cursor.y-rect.y;
   const isDragging=cursor.dragging&&!!down;
   if(isDragging){
+    if(!dragging)stopMopSpeech();
     dragging=true;down.moved=true;cancelHold();actionUntil=0;
     const state=cursor.direction||'idle';
     if(sprite.state!==state)sprite.action(state);
@@ -361,7 +458,7 @@ function finishPointer(event,cancelled=false){
   }
   // A plain click on a clinging pet must not start an action: she is still on the wall
   // and the edge sequence owns the canvas (an action would draw the standing sprite).
-  else if(!press.longPressed&&!clinging){const ca=settings?.clickAction||'waving';const pool=['waving','jumping','review','waiting','running','failed'];const chosen=ca==='random'?pool[Math.floor(Math.random()*pool.length)]:ca;action(chosen,false,true);}
+  else if(!press.longPressed&&!clinging){const ca=settings?.clickAction||'waving';const pool=['waving','jumping','review','waiting','running','failed'];const chosen=ca==='random'?pool[Math.floor(Math.random()*pool.length)]:ca;action(chosen,true,true);}
   else if(!press.longPressed&&clinging)edgeDialogue.wake();
   else plan();
 }

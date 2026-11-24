@@ -1,4 +1,5 @@
-import {PetSprite, ANIMATIONS, availableAnimations} from './sprite.js';
+import {PetSprite, availableAnimations} from './sprite.js';
+import {ACTIONS, DEFAULT_ACTION_WEIGHTS, MAX_ACTION_WEIGHT, normalizeActionWeights} from './random-action-weights.mjs';
 const $=id=>document.getElementById(id);
 const api=window.pedex;
 const {languages,translate}=globalThis.PetexI18n;
@@ -16,7 +17,14 @@ let state, cards=[], collectionKey='', toastTimer, actionTimer, busy=false;
 function toast(message,error=false) {clearTimeout(toastTimer);$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,error?8000:4200);}
 async function run(action) {try{return await action();}catch(error){toast(error.message,true);return null;}}
 async function update(patch) {return run(()=>api.updateSettings(patch));}
-function playAnimation() {const raw=$('animation').value,pool=['waving','jumping','review','waiting','running','failed'],name=raw==='random'?pool[Math.floor(Math.random()*pool.length)]:raw;if(!state.settings.motion)return;hero.action(name);clearTimeout(actionTimer);actionTimer=setTimeout(()=>hero.action('idle'),ANIMATIONS[name].durations.reduce((a,b)=>a+b,0)*(ANIMATIONS[name].cycles||2));run(()=>api.playAnimation(name));}
+function renderActionWeights(animations){
+  const weights=state.settings.randomActionWeights??DEFAULT_ACTION_WEIGHTS;
+  for(const [name,input] of Object.entries(weightInputs)){
+    input.parentElement.hidden=!animations.includes(name);
+    if(!input.matches(':focus')||!input.dataset.editing)input.value=weights[name];
+  }
+}
+async function playAnimation() {const raw=$('animation').value,pool=['waving','jumping','review','waiting','running','failed'],name=raw==='random'?pool[Math.floor(Math.random()*pool.length)]:raw;if(!state.settings.motion||!name)return;if(name==='cleaning10'){const pet=hero.pet;if(!await hero.prepareCleaning()||hero.pet!==pet||!state.settings.motion||$('animation').value!==raw)return;}hero.action(name);clearTimeout(actionTimer);actionTimer=setTimeout(()=>hero.action('idle'),hero.actionDuration(name));run(()=>api.playAnimation(name));}
 function render(next) {
   state=next;localize();
   const {settings,pets}=state;
@@ -30,16 +38,18 @@ function render(next) {
   const animations=availableAnimations(pet);
   if($('animation').dataset.petId!==pet.id+'|'+state.locale){
     $('animation').dataset.petId=pet.id+'|'+state.locale;
-    const opts=animations.map(name=>{const option=document.createElement('option');option.value=name;option.textContent=t(({waving:'wave',jumping:'jump',failed:'sad',waiting:'wait',running:'work',review:'look','running-left':'left','running-right':'right'})[name]);return option;});const randOpt=document.createElement('option');randOpt.value='random';randOpt.textContent=state.locale.startsWith('zh')?'随机动作':'Random';opts.push(randOpt);$('animation').replaceChildren(...opts);
+    const opts=animations.filter(name=>!ACTIONS[name].mop).map(name=>{const option=document.createElement('option');option.value=name;option.textContent=t(ACTIONS[name].label);return option;});const randOpt=document.createElement('option');randOpt.value='random';randOpt.textContent=state.locale.startsWith('zh')?'随机动作':'Random';opts.push(randOpt);$('animation').replaceChildren(...opts);
     clearTimeout(actionTimer);hero.action('idle');
   }
-  if(settings.clickAction&&$('animation').value!==settings.clickAction)$('animation').value=settings.clickAction;$('play').disabled=!settings.motion;
+  const clickAction=settings.clickAction==='cleaning10'&&!pet.cleaningUrl?'waving':settings.clickAction;
+  renderActionWeights(animations);
+  if(clickAction&&$('animation').value!==clickAction)$('animation').value=clickAction;$('play').disabled=!settings.motion;
   $('animation').disabled=!settings.motion;
   $('presence').textContent=t(!state.screenAwake?'sleeping':!settings.visible?'hidden':state.fullscreenHidden&&settings.hideFullscreen?'fullscreenHidden':!settings.motion?'paused':'visible');
   $('pet-count').textContent=pets.length;
   $('size').value=settings.size;
   $('size-description').textContent=`${settings.size} px`;
-  for(const key of ['alwaysOnTop','motion','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','edgeCling','edgeAutoPeek','shortcut'])$(key).checked=settings[key];
+  for(const key of ['alwaysOnTop','motion','randomActionBubbles','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','edgeCling','edgeAutoPeek','shortcut'])$(key).checked=settings[key];
   if($('edgePeekEvery'))$('edgePeekEvery').value=String(settings.edgePeekEvery||0);
   $('edgeStayMinutes').value=String((settings.edgeStayEvery??720000)/60000);
   $('launchAtLogin').disabled=!state.loginAvailable;
@@ -98,11 +108,27 @@ $('discover').onclick=async()=>{
 $('animation').onchange=()=>{update({clickAction:$('animation').value});playAnimation();};$('play').onclick=playAnimation;$('hero-pet').onclick=playAnimation;
 $('hero-pet').addEventListener('mousemove',event=>{if(state?.settings.followCursor){const rect=$('hero-pet').getBoundingClientRect();hero.gaze={x:(event.clientX-rect.x-rect.width/2)*3,y:(event.clientY-rect.y-rect.height/2)*3};}});
 $('hero-pet').addEventListener('mouseleave',()=>hero.gaze=null);
-for(const key of ['alwaysOnTop','motion','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','edgeCling','edgeAutoPeek','shortcut'])$(key).onchange=async()=>{const result=await update({[key]:$(key).checked});if(!result&&state)render(state);};
+for(const key of ['alwaysOnTop','motion','randomActionBubbles','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','edgeCling','edgeAutoPeek','shortcut'])$(key).onchange=async()=>{const result=await update({[key]:$(key).checked});if(!result&&state)render(state);};
 if($('edgePeekEvery'))$('edgePeekEvery').onchange=async()=>{const result=await update({edgePeekEvery:Number($('edgePeekEvery').value)||0});if(!result&&state)render(state);};
 $('edgeStayMinutes').onchange=async()=>{const input=$('edgeStayMinutes');if(!input.reportValidity())return;const result=await update({edgeStayEvery:input.valueAsNumber*60000});if(!result&&state)render(state);};
 $('size').addEventListener('input',()=>{const size=Number($('size').value);$('size-description').textContent=`${size} px`;});
 $('size').addEventListener('change',()=>update({size:Number($('size').value)}));
+const weightInputs=Object.fromEntries(Object.keys(DEFAULT_ACTION_WEIGHTS).map(name=>{
+  const row=document.createElement('label'),label=document.createElement('span'),input=document.createElement('input');
+  label.dataset.i18n=ACTIONS[name].label;input.id='action-weight-'+name;input.type='number';input.min=0;input.max=MAX_ACTION_WEIGHT;input.step=1;
+  input.setAttribute('aria-describedby','action-weights-hint');
+  input.oninput=()=>{input.dataset.editing='true';};
+  input.onblur=()=>{if(input.dataset.editing){delete input.dataset.editing;input.value=state.settings.randomActionWeights[name];}};
+  input.onchange=async()=>{
+    delete input.dataset.editing;
+    if(!Number.isFinite(input.valueAsNumber)){input.value=state.settings.randomActionWeights[name];return;}
+    const value=normalizeActionWeights({[name]:input.valueAsNumber})[name];
+    input.value=value;
+    if(!await update({randomActionWeights:{[name]:value}})&&!input.dataset.editing)input.value=state.settings.randomActionWeights[name];
+  };
+  row.append(label,input);$('action-weight-fields').append(row);return [name,input];
+}));
+$('reset-action-weights').onclick=()=>update({randomActionWeights:DEFAULT_ACTION_WEIGHTS});
 $('home').onclick=async()=>{if(await run(async()=>{await api.home();return true;}))toast(t('resetDone'));};
 $('github').onclick=event=>{event.preventDefault();run(()=>api.openRepository());};
 $('open-folder').onclick=()=>run(()=>api.openPetsFolder());
@@ -134,7 +160,7 @@ function renderExtras(){
       const petSelect=document.createElement('select');petSelect.setAttribute('aria-label',t('choosePet'));options(petSelect,pets.map(p=>[p.id,p.displayName]));petSelect.value=item.petId;petSelect.onchange=()=>run(()=>api.updateCompanion(item.id,{petId:petSelect.value}));row.append(petSelect);
       const visible=document.createElement('label'),checkbox=document.createElement('input');checkbox.type='checkbox';checkbox.checked=item.visible;checkbox.onchange=()=>run(()=>api.updateCompanion(item.id,{visible:checkbox.checked}));visible.append(checkbox,document.createTextNode(t('showPet')));row.append(visible);
       if(f.personalities){
-        const size=document.createElement('input');size.type='number';size.min=48;size.max=240;size.step=8;size.value=item.size;size.setAttribute('aria-label',t('size'));size.onchange=()=>run(()=>api.updateCompanion(item.id,{size:Number(size.value)}));row.append(size);
+        const size=document.createElement('input');size.type='number';size.min=$('size').min;size.max=$('size').max;size.step=$('size').step;size.value=item.size;size.setAttribute('aria-label',t('size'));size.onchange=()=>run(()=>api.updateCompanion(item.id,{size:Number(size.value)}));row.append(size);
         const behaviour=document.createElement('select');behaviour.setAttribute('aria-label',t('behaviour'));options(behaviour,['quiet','calm','playful'].map(value=>[value,t(value)]));behaviour.value=item.behaviour;behaviour.onchange=()=>run(()=>api.updateCompanion(item.id,{behaviour:behaviour.value}));row.append(behaviour);
         const gaze=document.createElement('label'),gazeBox=document.createElement('input');gazeBox.type='checkbox';gazeBox.checked=item.followCursor;gazeBox.onchange=()=>run(()=>api.updateCompanion(item.id,{followCursor:gazeBox.checked}));gaze.append(gazeBox,document.createTextNode(t('followCursor')));row.append(gaze);
       }

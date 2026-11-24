@@ -109,6 +109,8 @@ function updateTray() {
     {label:t('selectPet'),submenu:pets.map(p=>({label:p.displayName,type:'radio',checked:p.id===settings.petId,click:()=>selectPet(p.id)}))},
     ...(settings.features.multiPet?[{label:t('companions'),submenu:settings.companions.map(c=>({label:pets.find(p=>p.id===c.petId)?.displayName||'Miso',type:'checkbox',checked:c.visible,click:()=>enqueue(async()=>{c.visible=!c.visible;applySettings();await library.saveSettings(settings);})}))}]:[]),
     ...(settings.features.toys?[{label:t('throwBall'),enabled:settings.motion&&settings.visible,click:()=>desktop.throwBall()}]:[]),
+    ...(selectedPet().mopLeftUrl?[{label:t('mopLeft'),enabled:settings.motion&&settings.visible,click:()=>desktop.requestMop(desktop.primary,'left')}]:[]),
+    ...(selectedPet().mopRightUrl?[{label:t('mopRight'),enabled:settings.motion&&settings.visible,click:()=>desktop.requestMop(desktop.primary,'right')}]:[]),
     {label:t('settings'),click:showSettings},
     {type:'separator'},
     {label:t(settings.visible?'hidePet':'showPet'),click:toggleVisible},
@@ -133,13 +135,17 @@ function triggerTaskDoneNotice(p=desktop?.primary, metaText='', summaryText='') 
   desktop.speech(p,{kind:'done',badge:'✦ 任务完成',meta:metaText,text,action:'jumping',duration:8000});
 }
 function petMenu(p=desktop.primary) {
-  desktop.cancelSocial();p.walking=null;desktop.schedule();
+  desktop.cancelSocial();if(!p.walking?.mopping)p.walking=null;desktop.schedule();
   Menu.buildFromTemplate([
     {label:'💬 随机台词气泡',click:()=>{const pool=['waving','jumping','review','waiting','running'];desktop.action(p,pool[Math.floor(Math.random()*pool.length)]);}},
     {label:'🎉 测试任务完成提示',click:()=>triggerTaskDoneNotice(p,'耗时 12s','已更新天童爱丽丝女仆发箍与多行气泡高度防截断…')},
     {type:'separator'},
+    ...(desktop.pet(p)?.pettingV4?[{label:locale().startsWith('zh')?'摸头':t('petting'),click:()=>desktop.petting(p)}]:[]),
     {label:t('wave'),click:()=>desktop.action(p,'waving')},
     {label:t('look'),click:()=>desktop.action(p,'review')},
+    ...(desktop.pet(p)?.cleaningUrl?[{label:t('cleanScreen'),click:()=>desktop.action(p,'cleaning10',false,6700)}]:[]),
+    ...(desktop.pet(p)?.mopLeftUrl?[{label:t('mopLeft'),enabled:desktop.config(p).motion,click:()=>desktop.requestMop(p,'left')}]:[]),
+    ...(desktop.pet(p)?.mopRightUrl?[{label:t('mopRight'),enabled:desktop.config(p).motion,click:()=>desktop.requestMop(p,'right')}]:[]),
     {label:t('wait'),click:()=>desktop.action(p,'waiting')},
     {label:t('work'),click:()=>desktop.action(p,'running')},
     {label:t('sad'),click:()=>desktop.action(p,'failed')},
@@ -184,10 +190,11 @@ function configureIPC() {
   handler('pet:cling-failed',petWindows,function(){desktop.detachCling(desktop.fromWindow(this));return true;});
   handler('settings:update', settingsOnly, patch => enqueue(async () => {
     if (!patch || typeof patch !== 'object') throw new Error('Invalid settings.');
-    const permitted = ['petId', 'clickAction', 'size', 'alwaysOnTop', 'motion', 'randomAnimations', 'followCursor', 'launchAtLogin', 'visible', 'behaviour', 'hideFullscreen', 'snapEdges', 'edgeCling', 'edgeAutoPeek', 'edgePeekEvery', 'edgeStayEvery', 'shortcut', 'language','features','primaryVisible','companions','routine','roamArea','favourites','petNames'];
+    const permitted = ['petId', 'clickAction', 'size', 'alwaysOnTop', 'motion', 'randomAnimations', 'randomActionBubbles', 'randomActionWeights', 'followCursor', 'launchAtLogin', 'visible', 'behaviour', 'hideFullscreen', 'snapEdges', 'edgeCling', 'edgeAutoPeek', 'edgePeekEvery', 'edgeStayEvery', 'shortcut', 'language','features','primaryVisible','companions','routine','roamArea','favourites','petNames'];
     const clean = Object.fromEntries(Object.entries(patch).filter(([key]) => permitted.includes(key)));
     if (clean.petId && !pets.some(p => p.id === clean.petId)) throw new Error('That pet is no longer in your collection.');
     if(Object.hasOwn(clean,'behaviour'))clean.randomAnimations=clean.behaviour!=='quiet';
+    if(Object.hasOwn(clean,'randomActionWeights'))clean.randomActionWeights={...settings.randomActionWeights,...clean.randomActionWeights};
     const next = normalizeSettings({...settings, ...clean});
     if (next.launchAtLogin !== settings.launchAtLogin) {
       if (!snapshot().loginAvailable) throw new Error('Launch at login is available in the installed app.');
@@ -254,12 +261,17 @@ function configureIPC() {
   }));
   handler('pet:home', settingsOnly, () => enqueue(async () => {settings.visible = true; resetPosition(); applySettings(); await library.saveSettings(settings);}));
   handler('pet:play', settingsOnly, name => {
+    if(name==='cleaning10'&&selectedPet().cleaningUrl){
+      desktop.action(desktop.primary,name,false,6700);return;
+    }
     const valid = selectedPet().builtin ? ['waving','jumping','running-left','running-right'] : ['waving','jumping','failed','waiting','running','review','running-left','running-right'];
     if (!valid.includes(name)) throw new Error('Unsupported animation.');
     desktop.action(desktop.primary,name);
   });
   handler('pets:export', settingsOnly, exportLibrary);
   handler('pet:wander',petWindows,function(name,duration){desktop.wander(desktop.fromWindow(this),name,duration);});
+  handler('pet:mop-ready',petWindows,function(token){return desktop.startMop(desktop.fromWindow(this),token);});
+  handler('pet:mop-auto',petWindows,function(direction){return desktop.requestMop(desktop.fromWindow(this),direction,true);});
   handler('settings:close',settingsOnly,()=>settingsWindow.close());
   handler('repository:open',settingsOnly,()=>shell.openExternal('https://github.com/iebb/petex'));
   handler('pets:open-folder',settingsOnly,async()=>{const error=await shell.openPath(library.petsPath);if(error)throw new Error(error);});
@@ -338,8 +350,15 @@ if (locked) app.whenReady().then(async () => {
   if (snapshot().loginAvailable) settings.launchAtLogin = app.getLoginItemSettings().openAtLogin;
   protocol.handle('pet-asset', async request => {
     const url = new URL(request.url);
-    const match = /^\/([a-f0-9-]{36})\/((?:spritesheet|edge)\.(?:png|webp))$/.exec(url.pathname);
-    if (url.hostname !== 'library' || !match || !pets.some(p => p.id === match[1])) return new Response('Not found', {status: 404});
+    const match = /^\/([a-f0-9-]{36})\/((?:spritesheet|edge)\.(?:png|webp)|sad-v15\.webp|look-v4\.webp|waving\.webp|petting-v4\.webp|cleaning10\.webp|mop-(?:left|right)\.webp)$/.exec(url.pathname);
+    if (url.hostname !== 'library' || !match || !pets.some(p => p.id === match[1] &&
+      (match[2] !== 'sad-v15.webp' || p.sadUrl === url.href) &&
+      (match[2] !== 'look-v4.webp' || p.lookUrl === url.href) &&
+      (match[2] !== 'waving.webp' || p.waveUrl === url.href) &&
+      (match[2] !== 'petting-v4.webp' || p.pettingUrl === url.href) &&
+      (match[2] !== 'cleaning10.webp' || p.cleaningUrl === url.href) &&
+      (match[2] !== 'mop-left.webp' || p.mopLeftUrl === url.href) &&
+      (match[2] !== 'mop-right.webp' || p.mopRightUrl === url.href))) return new Response('Not found', {status: 404});
     const file = path.join(library.petsPath, match[1], match[2]);
     try {
       const actual = await fs.realpath(file);

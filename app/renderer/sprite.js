@@ -1,4 +1,7 @@
 import './edge-config.js';
+import {drawCleaningEffects} from './cleaning-effects.js';
+import {ACTIONS, DEFAULT_ACTION_WEIGHTS, availableAnimations} from './random-action-weights.mjs';
+export {availableAnimations};
 const EdgeGeometry=globalThis.PetexEdge;
 export const edgeHitBand=EdgeGeometry.hitBand;
 // Codex atlas: eight columns, 192 × 208 cells. Version 2 adds 16 gaze poses.
@@ -28,10 +31,31 @@ export const ANIMATIONS = {
 export function frameColumn(animation, frame) {
   return animation.frames ? animation.frames[frame] : frame;
 }
-export function availableAnimations(pet) {
-  return pet?.builtin
-    ? ['waving', 'jumping', 'running-left', 'running-right']
-    : ['waving', 'jumping', 'failed', 'waiting', 'running', 'review', 'running-left', 'running-right'];
+
+const SAD = {width:384, height:416, columns:8, frames:110, fps:30};
+const SAD_DURATION = SAD.frames*1000/SAD.fps;
+const LOOK = {width:384,height:416,columns:8,frames:128,fps:30};
+const LOOK_DURATION = LOOK.frames*1000/LOOK.fps;
+const WAVE = {width:384,height:416,columns:8,frames:102,fps:30};
+const WAVE_DURATION = WAVE.frames*1000/WAVE.fps;
+const PETTING = {width:384,height:416,columns:8,frames:153,fps:30};
+const PETTING_SMILE_FRAME = 117; // Eyes closed, mouth open, hands clasped.
+const PETTING_SMILE_EXTRA_MS = 150;
+const PETTING_SMILE_END = (PETTING_SMILE_FRAME+1)*1000/PETTING.fps;
+const PETTING_DURATION = PETTING.frames*1000/PETTING.fps+PETTING_SMILE_EXTRA_MS;
+const CLEANING = {width:384,height:416,columns:12,frames:216,fps:30};
+const CLEANING_START_MS = 500;
+const CLEANING_DURATION = CLEANING.frames*1000/CLEANING.fps-CLEANING_START_MS;
+const MOP = {width:384,height:416,columns:10,frames:150,fps:30};
+const MOP_DURATION = 4000;
+const isMop = name=>name==='mop-left'||name==='mop-right';
+function actionDuration(name, extendedSad=false, extendedLook=false, extendedWave=false) {
+  if(name==='cleaning10')return CLEANING_DURATION;
+  if(isMop(name))return MOP_DURATION;
+  if(extendedWave&&name==='waving')return WAVE_DURATION;
+  if(extendedLook&&name==='review')return LOOK_DURATION;
+  const action=ANIMATIONS[name]||ANIMATIONS.idle;
+  return extendedSad&&name==='failed' ? SAD_DURATION : action.durations.reduce((a,b)=>a+b,0)*(action.cycles||2);
 }
 
 /* ------------------------------------------------------------------ *
@@ -78,16 +102,16 @@ export class RandomAnimations {
   constructor(random = () => Math.random()) { this.random = random; this.reset(); }
   reset() { this.nextAt = null; this.previous = null; }
   delay(behaviour = 'calm') { return behaviour === 'playful' ? 4000 + this.random() * 4000 : 10000 + this.random() * 8000; }
-  next(pet, now, enabled, busy = false, behaviour = 'calm') {
+  next(pet, now, enabled, busy = false, behaviour = 'calm', extendedSad = false, extendedLook = false, extendedWave = false, weights = DEFAULT_ACTION_WEIGHTS, ready = {}) {
     if (!enabled || behaviour === 'quiet') { this.nextAt = null; return null; }
+    const eligible = availableAnimations(pet).filter(name => weights[name] > 0 && (!ACTIONS[name].ready || ready[ACTIONS[name].ready]));
+    if (!eligible.length) { this.nextAt = null; return null; }
     if (this.nextAt === null || busy) { this.nextAt = now + this.delay(behaviour); return null; }
     if (now < this.nextAt) return null;
-    const weights = {waving:2, review:2.5, waiting:2.5, running:2.5, jumping:2.2, failed:1.5, 'running-left':2, 'running-right':2};
-    const choices = availableAnimations(pet).filter(name => name !== this.previous);
+    const choices = eligible.length > 1 ? eligible.filter(name => name !== this.previous) : eligible;
     let roll = this.random() * choices.reduce((sum,name)=>sum+weights[name],0);
     const name = choices.find(name => (roll -= weights[name]) < 0) || choices.at(-1);
-    const cycles = ANIMATIONS[name]?.cycles || 2;
-    const duration = ANIMATIONS[name].durations.reduce((a, b) => a + b, 0) * cycles;
+    const duration = actionDuration(name, extendedSad, extendedLook, extendedWave);
     this.previous = name;
     this.nextAt = now + duration + this.delay(behaviour);
     return {name, duration};
@@ -187,8 +211,9 @@ export function drawMiso(ctx, time = 0, state = 'idle', gaze = null, motion = tr
 export class PetSprite {
   constructor(canvas) {
     this.canvas=canvas;this.ctx=canvas.getContext('2d',{willReadFrequently:true});
-    this.pet=null;this.image=null;this.state='idle';this.started=performance.now();
-    this._motion=true;this._gaze=null;this._active=true;this.timer=null;this.stopped=false;
+    this.pet=null;this.image=null;this._sadImage=null;this._playingSad=false;this._lookImage=null;this._playingLook=false;this.state='idle';this.started=performance.now();
+    this._pettingImage=null;this._playingPetting=false;
+    this._motion=true;this._gaze=null;this._active=true;this.timer=null;this._sadRaf=null;this.stopped=false;
     this.metrics=null;this._mode=undefined;this._fadeAt=-Infinity;this._fadeCanvas=null;this.breathOrigin=performance.now();
     this._edgeImage=null;this._edge=null;this._edgeTimer=null;this._edgeRaf=null;
     canvas.width=384;canvas.height=416;
@@ -231,12 +256,45 @@ export class PetSprite {
   set active(value){if(this._active!==!!value){this._active=!!value;this.started=performance.now();this.refresh();}}
   setPet(pet) {
     if(this.pet?.id===pet.id)return this._petLoad||Promise.resolve();
+    this._playingSad=false;this._sadImage=null;this._playingLook=false;this._lookImage=null;this._playingWave=false;this._waveImage=null;
+    this._playingPetting=false;this._pettingImage=null;
+    this._cleaningRows?.forEach(row=>row.close());this._cleaningRows=null;this._cleaningLoad=null;
+    this._mopAtlases?.forEach(slot=>slot.rows?.forEach(row=>row.close()));
+    this._mopAtlases=new Map();
     this.releaseEdge();this._edgeImage=null;this.pet=pet;this.image=null;this.metrics=null;this._mode=undefined;this._fadeAt=-Infinity;this.started=performance.now();this.refresh();
     this._petLoad=(async()=>{
     if(!pet.builtin){
       const image=new Image();image.crossOrigin='anonymous';image.src=pet.assetUrl;
       await image.decode();
       if(this.pet.id===pet.id){this.image=image;this.metrics=measureAtlas(image);this.refresh();}
+      if(pet.pettingUrl){
+        const pat=new Image();pat.crossOrigin='anonymous';pat.src=pet.pettingUrl;
+        pat.decode().then(()=>{
+          if(this.pet===pet && pat.naturalWidth===PETTING.columns*PETTING.width
+            && pat.naturalHeight===Math.ceil(PETTING.frames/PETTING.columns)*PETTING.height)this._pettingImage=pat;
+        }).catch(()=>{});
+      }
+      if(pet.sadUrl){
+        const sad=new Image();sad.crossOrigin='anonymous';sad.src=pet.sadUrl;
+        sad.decode().then(()=>{
+          if(this.pet===pet && sad.naturalWidth===SAD.columns*SAD.width
+            && sad.naturalHeight===Math.ceil(SAD.frames/SAD.columns)*SAD.height)this._sadImage=sad;
+        }).catch(()=>{});
+      }
+      if(pet.lookUrl){
+        const look=new Image();look.crossOrigin='anonymous';look.src=pet.lookUrl;
+        look.decode().then(()=>{
+          if(this.pet===pet && look.naturalWidth===LOOK.columns*LOOK.width
+            && look.naturalHeight===Math.ceil(LOOK.frames/LOOK.columns)*LOOK.height)this._lookImage=look;
+        }).catch(()=>{});
+      }
+      if(pet.waveUrl){
+        const wave=new Image();wave.crossOrigin='anonymous';wave.src=pet.waveUrl;
+        wave.decode().then(()=>{
+          if(this.pet===pet && wave.naturalWidth===WAVE.columns*WAVE.width
+            && wave.naturalHeight===Math.ceil(WAVE.frames/WAVE.columns)*WAVE.height)this._waveImage=wave;
+        }).catch(()=>{});
+      }
       // The cling artwork is optional: a pet without it keeps the old behaviour.
       if(pet.edgeUrl){
         const edge=new Image();edge.crossOrigin='anonymous';edge.src=pet.edgeUrl;
@@ -358,14 +416,125 @@ export class PetSprite {
       ctx.drawImage(img,sx,sy+band,cw,ch-band,dx,dy+band*k,cw*k,(ch-band)*k);
     }else ctx.drawImage(img,sx,sy,cw,ch,dx,dy,cw*k,ch*k);
   }
-  action(state){this.state=state;this.started=performance.now();this.refresh();}
-  refresh(){clearTimeout(this.timer);this.timer=null;this.tick(performance.now());}
+  get hasSad(){return !!this._sadImage;}
+  get hasLook(){return !!this._lookImage;}
+  get hasWave(){return !!this._waveImage;}
+  get hasPetting(){return !!this._pettingImage;}
+  get hasCleaning(){return !!this._cleaningRows;}
+  prepareCleaning(){
+    const pet=this.pet;
+    if(!pet?.cleaningUrl)return Promise.resolve(false);
+    return this._cleaningLoad??=(async()=>{
+      const image=new Image();image.crossOrigin='anonymous';image.src=pet.cleaningUrl;
+      const rows=Math.ceil(CLEANING.frames/CLEANING.columns),width=CLEANING.columns*CLEANING.width;
+      await image.decode();
+      if(this.pet!==pet||image.naturalWidth!==width||image.naturalHeight!==rows*CLEANING.height)return false;
+      const bitmaps=await Promise.allSettled(Array.from({length:rows},(_,row)=>
+        createImageBitmap(image,0,row*CLEANING.height,width,CLEANING.height)));
+      const strips=bitmaps.flatMap(item=>item.status==='fulfilled'?[item.value]:[]);
+      if(this.pet===pet&&strips.length===rows){this._cleaningRows=strips;return true;}
+      strips.forEach(strip=>strip.close());
+      return false;
+    })().catch(()=>false);
+  }
+  prepareMop(name){
+    const pet=this.pet, url=name==='mop-left'?pet?.mopLeftUrl:name==='mop-right'?pet?.mopRightUrl:null;
+    if(!url)return Promise.resolve(false);
+    const atlases=this._mopAtlases, cached=atlases.get(name);
+    if(cached)return cached.load;
+    const slot={rows:null,load:null};atlases.set(name,slot);
+    slot.load=(async()=>{
+      const image=new Image();image.crossOrigin='anonymous';image.src=url;
+      await image.decode();
+      const width=MOP.columns*MOP.width,rows=Math.ceil(MOP.frames/MOP.columns);
+      if(this.pet!==pet||image.naturalWidth!==width||image.naturalHeight!==rows*MOP.height)return false;
+      const results=await Promise.allSettled(Array.from({length:rows},(_,row)=>
+        createImageBitmap(image,0,row*MOP.height,width,MOP.height)));
+      const strips=results.flatMap(result=>result.status==='fulfilled'?[result.value]:[]);
+      if(this.pet===pet&&strips.length===rows){slot.rows=strips;return true;}
+      strips.forEach(strip=>strip.close());
+      return false;
+    })().catch(()=>false).then(ready=>{
+      if(!ready&&atlases.get(name)===slot)atlases.delete(name);
+      return ready;
+    });
+    return slot.load;
+  }
+  action(state,duration){
+    const returningToIdle=state==='idle'&&(this._playingLook||this._playingPetting||this.state==='cleaning10'||isMop(this.state));
+    this._playingPetting=state==='petting3'&&this.hasPetting;
+    this.state=state;this._playingSad=state==='failed'&&this.hasSad;
+    this._mopDuration=isMop(state)?duration??MOP_DURATION:0;
+    this._playingLook=state==='review'&&this.hasLook;
+    this._playingWave=state==='waving'&&this.hasWave;
+    if(this._playingSad||this._playingLook||this._playingWave||this._playingPetting||state==='cleaning10'||isMop(state)){this._mode=state;this._fadeAt=-Infinity;}
+    this.started=performance.now();
+    if(returningToIdle)this.breathOrigin=this.started;
+    this.refresh();
+  }
+  actionDuration(name){return name==='petting3'?PETTING_DURATION:actionDuration(name,this._playingSad,this._playingLook,this._playingWave);}
+  _tickActionAtlas(elapsed,atlas,meta,prefix){
+    const step=Math.max(0,Math.floor(elapsed*meta.fps/1000));
+    const frame=Math.min(meta.frames-1,step),key=`${prefix}:${this.pet.id}:${frame}`;
+    const {width,height,columns}=meta;
+    if(this.renderKey!==key){
+      this.renderKey=key;
+      this.ctx.clearRect(0,0,width,height);
+      const row=Math.floor(frame/columns),strips=Array.isArray(atlas);
+      this.ctx.drawImage(strips?atlas[row]:atlas,(frame%columns)*width,strips?0:row*height,width,height,0,0,width,height);
+      if(prefix==='cleaning')drawCleaningEffects(this.ctx,frame*1000/meta.fps);
+    }
+    clearTimeout(this.timer);this.timer=null;
+    if(this._sadRaf===null)this._sadRaf=requestAnimationFrame(()=>{
+      this._sadRaf=null;
+      this.tick(performance.now());
+    });
+  }
+  _cancelSadRaf(){
+    if(this._sadRaf!==null)cancelAnimationFrame(this._sadRaf);
+    this._sadRaf=null;
+  }
+  refresh(){clearTimeout(this.timer);this.timer=null;this._cancelSadRaf();this.tick(performance.now());}
   tick(now) {
     if(this.stopped||!this._active||(typeof document!=='undefined'&&document.hidden))return;
     // While clinging, the edge sequence owns the canvas: no breathing, gazing or
     // action frames may draw over it.
     if(this._edge)return;
-    const elapsed=this.motion?now-this.started:0;
+    let elapsed=this.motion?now-this.started:0;
+    const mopRows=this._mopAtlases?.get(this.state)?.rows;
+    if(this.motion&&mopRows){
+      if(elapsed<this._mopDuration){this._tickActionAtlas(elapsed,mopRows,MOP,this.state);return;}
+      this.state='idle';this.started=now;this.breathOrigin=now;elapsed=0;
+    }
+    if(this.motion&&this.state==='cleaning10'&&this._cleaningRows){
+      if(elapsed<CLEANING_DURATION){
+        const sourceMs=elapsed+CLEANING_START_MS;
+        this._tickActionAtlas(sourceMs,this._cleaningRows,CLEANING,'cleaning');
+        this.onCleaningProgress?.(sourceMs);return;
+      }
+      this.state='idle';this.started=now;this.breathOrigin=now;elapsed=0;
+    }
+    if(this.motion&&this._playingPetting&&this.state==='petting3'&&this._pettingImage){
+      if(elapsed<PETTING_DURATION){
+        const artworkTime=elapsed<PETTING_SMILE_END?elapsed:
+          elapsed<PETTING_SMILE_END+PETTING_SMILE_EXTRA_MS?PETTING_SMILE_FRAME*1000/PETTING.fps:
+          elapsed-PETTING_SMILE_EXTRA_MS;
+        this._tickActionAtlas(artworkTime,this._pettingImage,PETTING,'pat');return;
+      }
+      this._playingPetting=false;this.state='idle';this.started=now;this.breathOrigin=now;elapsed=0;
+    }
+    if(this.motion&&this._playingWave&&this.state==='waving'&&this._waveImage){
+      if(elapsed<WAVE_DURATION){this._tickActionAtlas(elapsed,this._waveImage,WAVE,'wave');return;}
+      this._playingWave=false;this.state='idle';this.started=now;elapsed=0;
+    }
+    if(this.motion&&this._playingSad&&this.state==='failed'&&this._sadImage){
+      if(elapsed<SAD_DURATION){this._tickActionAtlas(elapsed,this._sadImage,SAD,'sad');return;}
+      this._playingSad=false;this.state='idle';this.started=now;elapsed=0;
+    }
+    if(this.motion&&this._playingLook&&this.state==='review'&&this._lookImage){
+      if(elapsed<LOOK_DURATION){this._tickActionAtlas(elapsed,this._lookImage,LOOK,'look');return;}
+      this._playingLook=false;this.state='idle';this.started=now;this.breathOrigin=now;elapsed=0;
+    }
     const gazing=this.motion&&this.gaze&&this.pet?.spriteVersionNumber===2&&this.state==='idle';
     const ang=gazing?(this._smoothAngle??(Math.atan2(this.gaze.x,-this.gaze.y)+Math.PI*2)%(Math.PI*2)):0;
     const dirIdx=gazing?(this._gazeIdx??Math.round(ang/(Math.PI/8))%16):0;
@@ -417,5 +586,5 @@ export class PetSprite {
     if(delay===Infinity)return;
     this.timer=setTimeout(()=>{this.timer=null;this.tick(performance.now());},delay);
   }
-  stop(){this.stopped=true;clearTimeout(this.timer);this.timer=null;if(typeof document!=='undefined')document.removeEventListener('visibilitychange',this.visibility);}
+  stop(){this.stopped=true;clearTimeout(this.timer);this.timer=null;this._cancelSadRaf();if(typeof document!=='undefined')document.removeEventListener('visibilitychange',this.visibility);}
 }

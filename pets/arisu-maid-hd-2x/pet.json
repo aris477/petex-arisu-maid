@@ -4,7 +4,7 @@
   "spriteVersionNumber": 2,
   "spritesheetPath": "spritesheet.webp",
   "id": "8a87ef6b-0a63-428c-af2a-a30448d753af",
-  "fingerprint": "9c48304824174e11e014e75d05603918bb85998f23cfaa36ca0b9144684fb3f3",
+  "fingerprint": "18acbcecd1aef931d97a0811f8dd10aa5da0de64da79475ce387d9ae251268d6",
   "edge": {
     "spritesheetPath": "edge.webp",
     "sides": [
@@ -13,5 +13,12 @@
       "bottom",
       "top"
     ]
-  }
+  },
+  "sadV15": true,
+  "lookV4": true,
+  "reference2Wave": true,
+  "pettingV4": true,
+  "cleaning10": true,
+  "mopLeft": true,
+  "mopRight": true
 }
