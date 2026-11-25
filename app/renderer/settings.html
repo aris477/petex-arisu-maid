@@ -7,45 +7,74 @@
 </head>
 <body>
 <div class="titlebar">Petex</div>
-<main>
-  <section class="selected-pet" data-i18n-aria="selectedPet">
-    <canvas id="hero-pet" data-i18n-aria="preview"></canvas>
-    <div class="selected-details"><h1 id="pet-name">Miso</h1><p id="presence"></p>
-      <div class="animation-controls"><select id="animation" data-i18n-aria="animations"></select><button id="play" data-i18n="play"></button><button id="delete-pet" data-i18n="delete" hidden></button><button id="export-pet" data-i18n="exportPet" hidden></button></div>
+<main id="arisu-clubroom">
+  <header class="room-hero">
+    <canvas class="room-art" width="248" height="68" aria-hidden="true"></canvas>
+    <div class="room-copy">
+      <img class="room-sign" src="../assets/clubroom/gdd-cat.png" alt="">
+      <h1><span data-i18n="roomTitle1"></span><br><span data-i18n="roomTitle2"></span></h1>
+      <span class="room-sub" data-i18n="settingsHeading"></span>
+    </div>
+    <div class="room-avatar"><img id="room-portrait" src="../assets/clubroom/cleaning-heart.png" alt=""><canvas id="hero-pet" data-i18n-aria="preview" hidden></canvas></div>
+    <canvas class="room-star" width="16" height="16" data-icon="star" aria-hidden="true"></canvas>
+  </header>
+  <nav class="room-nav" data-i18n-aria="settingsHeading">
+    <button type="button" data-room-page="desktop" aria-controls="room-pane-desktop" aria-current="page"><canvas width="16" height="16" data-icon="apron" aria-hidden="true"></canvas><span data-i18n="roomDesktop"></span></button>
+    <button type="button" data-room-page="actions" aria-controls="room-pane-actions"><canvas width="16" height="16" data-icon="heart" aria-hidden="true"></canvas><span data-i18n="roomActions"></span></button>
+    <button type="button" data-room-page="edge" aria-controls="room-pane-edge"><canvas width="16" height="16" data-icon="door" aria-hidden="true"></canvas><span data-i18n="roomEdge"></span><canvas class="room-peek" width="144" height="162" aria-hidden="true" hidden></canvas></button>
+    <button type="button" data-room-page="library" aria-controls="room-pane-library"><canvas width="16" height="16" data-icon="cart" aria-hidden="true"></canvas><span data-i18n="roomLibrary"></span></button>
+    <button type="button" data-room-page="system" aria-controls="room-pane-system"><canvas width="16" height="16" data-icon="star" aria-hidden="true"></canvas><span data-i18n="roomSystem"></span></button>
+  </nav>
+  <div class="room-settings">
+  <section class="room-pane" id="room-pane-desktop" data-room-pane="desktop" aria-labelledby="room-desktop">
+    <div class="section-heading"><h2 class="room-heading" id="room-desktop" data-i18n="roomDesktop"></h2></div>
+    <div class="preferences-grid room-fields">
+      <div class="setting size-setting"><label for="size" data-i18n="size"></label><input id="size" type="range" min="48" max="520" step="8" value="160" data-i18n-aria="size"><output id="size-description" for="size">160 px</output></div>
+      <label class="setting toggle-setting"><span data-i18n="showPet"></span><input id="visible" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <label class="setting toggle-setting"><span data-i18n="alwaysOnTop"></span><input id="alwaysOnTop" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <label class="setting toggle-setting"><span><span data-i18n="followCursor"></span><span id="gaze-description" class="setting-description" hidden></span></span><input id="followCursor" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <label class="setting toggle-setting"><span><span data-i18n="hideFullscreen"></span><span id="fullscreen-description" class="setting-description" hidden></span></span><input id="hideFullscreen" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
     </div>
   </section>
-  <section aria-labelledby="collection-title">
-    <div class="section-heading"><h2 id="collection-title"><span data-i18n="pets"></span> <span id="pet-count">1</span></h2><div class="footer-links"><button id="import-builtins" class="text-button" data-i18n="builtins"></button><button id="discover" class="text-button" data-i18n="discover"></button></div></div>
-    <div id="library-tools" class="library-tools" hidden><input id="pet-search" type="search" data-i18n-placeholder="searchPets" data-i18n-aria="searchPets"><label><input id="only-favourites" type="checkbox"><span data-i18n="favourites"></span></label><button id="favourite-pet" data-i18n="favourite"></button><input id="rename-pet" maxlength="80" data-i18n-aria="renamePet"><button id="rename-save" data-i18n="renamePet"></button></div>
-    <div class="pet-list" id="pet-list" data-i18n-aria="choosePet"></div>
-    <div class="import-note"><span class="drop-label" data-i18n="dropFolder"></span><button id="import-file" class="text-button" data-i18n="importFile"></button><span class="file-types">ZIP · JSON · PNG · WebP</span></div>
-  </section>
-  <section aria-labelledby="preferences-title"><div class="section-heading"><h2 id="preferences-title" data-i18n="settingsHeading"></h2></div>
-    <div class="preferences-grid main-preferences">
-      <div class="setting size-setting"><label for="size" data-i18n="size"></label><input id="size" type="range" min="48" max="520" step="8" value="160" data-i18n-aria="size"><output id="size-description" for="size">160 px</output></div>
-      <label class="setting toggle-setting"><span data-i18n="alwaysOnTop"></span><input id="alwaysOnTop" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+  <section class="room-pane" id="room-pane-actions" data-room-pane="actions" aria-labelledby="room-actions" hidden>
+    <div class="section-heading"><h2 class="room-heading" id="room-actions" data-i18n="roomActions"></h2></div>
+    <div class="preferences-grid room-fields">
       <label class="setting toggle-setting"><span data-i18n="animations"></span><input id="motion" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
-      <label class="setting select-setting"><span data-i18n="behaviour"></span><select id="behaviour"><option value="quiet" data-i18n="quiet"></option><option value="calm" data-i18n="calm"></option><option value="playful" data-i18n="playful"></option></select></label>
       <label class="setting toggle-setting"><span data-i18n="randomActionBubbles"></span><input id="randomActionBubbles" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <label class="setting select-setting"><span data-i18n="behaviour"></span><select id="behaviour"><option value="quiet" data-i18n="quiet"></option><option value="calm" data-i18n="calm"></option><option value="playful" data-i18n="playful"></option></select></label>
+      <label class="setting select-setting"><span data-i18n="roomClickAction"></span><select id="click-action"></select></label>
+    </div>
+    <div class="animation-controls"><label for="animation" data-i18n="roomPreview"></label><select id="animation"></select><button id="play" type="button"><canvas width="16" height="16" data-icon="pad" aria-hidden="true"></canvas><span data-i18n="play"></span></button></div>
       <details class="action-weights">
         <summary data-i18n="actionWeights" data-i18n-title="actionWeightsHint" aria-describedby="action-weights-hint"></summary>
         <span id="action-weights-hint" data-i18n="actionWeightsHint" hidden></span>
         <div id="action-weight-fields" class="action-weight-fields"></div>
         <button id="reset-action-weights" type="button" class="text-button" data-i18n="resetActionWeights"></button>
       </details>
-      <label class="setting toggle-setting"><span><span data-i18n="followCursor"></span><span id="gaze-description" class="setting-description" hidden></span></span><input id="followCursor" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
-      <label class="setting toggle-setting"><span><span data-i18n="login"></span><span id="login-description" class="setting-description" hidden></span></span><input id="launchAtLogin" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
-      <label class="setting toggle-setting"><span data-i18n="showPet"></span><input id="visible" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
-      <label class="setting toggle-setting"><span><span data-i18n="hideFullscreen"></span><span id="fullscreen-description" class="setting-description" hidden></span></span><input id="hideFullscreen" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+  </section>
+  <section class="room-pane" id="room-pane-edge" data-room-pane="edge" aria-labelledby="room-edge" hidden>
+    <div class="section-heading"><h2 class="room-heading" id="room-edge" data-i18n="roomEdge"></h2></div>
+    <div class="preferences-grid room-fields">
       <label class="setting toggle-setting"><span data-i18n="snapEdges"></span><input id="snapEdges" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting toggle-setting"><span><span data-i18n="edgeCling"></span><span class="setting-description" data-i18n="edgeClingHint"></span></span><input id="edgeCling" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting toggle-setting"><span data-i18n="edgeAutoPeek"></span><input id="edgeAutoPeek" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
       <label class="setting select-setting"><span data-i18n="edgePeekEvery"></span><select id="edgePeekEvery"><option value="0" data-i18n="edgePeekOff"></option><option value="8000" data-i18n="edgePeek8"></option><option value="15000" data-i18n="edgePeek15"></option><option value="30000" data-i18n="edgePeek30"></option></select></label>
-      <label class="setting toggle-setting"><span><span data-i18n="shortcut"></span><span id="shortcut-description" class="setting-description"></span></span><input id="shortcut" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
-      <label class="setting select-setting"><span data-i18n="language"></span><select id="language"></select></label>
       <label class="setting stay-setting"><span><span data-i18n="edgeStayEvery"></span><span id="edge-stay-hint" class="setting-description" data-i18n="edgeStayHint"></span></span><span class="stay-input"><input id="edgeStayMinutes" type="number" min="0" max="120" step="1" required value="12" data-i18n-aria="edgeStayEvery" aria-describedby="edge-stay-hint"><span data-i18n="edgeStayUnit"></span></span></label>
     </div>
   </section>
+  <section class="room-pane" id="room-pane-library" data-room-pane="library" aria-labelledby="room-library" hidden>
+    <div class="section-heading"><h2 class="room-heading" id="room-library" data-i18n="roomLibrary"></h2><details class="room-import"><summary data-i18n="roomAddPet"></summary><div class="room-import-menu"><button id="import-file" data-i18n="roomImportFile"></button><button id="import-folder" data-i18n="importFolder"></button><button id="import-builtins" data-i18n="builtins"></button><button id="discover" data-i18n="discover"></button><span class="muted">ZIP · JSON · PNG · WebP</span></div></details></div>
+    <div class="room-pet-tools"><strong id="pet-name"></strong><span id="presence" class="muted"></span><span id="pet-count" hidden></span><button id="export-pet" data-i18n="exportPet" hidden></button><button id="delete-pet" data-i18n="delete" hidden></button></div>
+    <div id="library-tools" class="library-tools" hidden><input id="pet-search" type="search" data-i18n-placeholder="searchPets" data-i18n-aria="searchPets"><label><input id="only-favourites" type="checkbox"><span data-i18n="favourites"></span></label><button id="favourite-pet" data-i18n="favourite"></button><input id="rename-pet" maxlength="80" data-i18n-aria="renamePet"><button id="rename-save" data-i18n="renamePet"></button></div>
+    <div class="pet-list" id="pet-list" data-i18n-aria="choosePet"></div>
+  </section>
+  <section class="room-pane" id="room-pane-system" data-room-pane="system" aria-labelledby="room-system" hidden>
+    <div class="section-heading"><h2 class="room-heading" id="room-system" data-i18n="roomSystem"></h2></div>
+    <div class="preferences-grid room-fields">
+      <label class="setting select-setting"><span data-i18n="language"></span><select id="language"></select></label>
+      <label class="setting toggle-setting"><span><span data-i18n="login"></span><span id="login-description" class="setting-description" hidden></span></span><input id="launchAtLogin" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+      <label class="setting toggle-setting"><span><span data-i18n="shortcut"></span><span id="shortcut-description" class="setting-description"></span></span><input id="shortcut" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
+    </div>
   <details id="more"><summary data-i18n="more"></summary>
     <div class="section-heading"><p class="muted" data-i18n="extrasHint"></p><button id="extras-off" class="text-button" data-i18n="extrasOff"></button></div>
     <div class="preferences-grid feature-switches"><label class="setting toggle-setting"><span data-i18n="multiPet"></span><input id="feature-multiPet" type="checkbox" role="switch"><span class="switch" aria-hidden="true"></span></label>
@@ -68,7 +97,9 @@
     <section id="routines-panel" class="extra-panel" hidden><h2 data-i18n="routineHours"></h2><div class="inline-controls"><label><span data-i18n="fromHour"></span> <input id="routine-start" type="number" min="0" max="23" data-i18n-aria="fromHour"></label><label><span data-i18n="toHour"></span> <input id="routine-end" type="number" min="0" max="23" data-i18n-aria="toHour"></label><label><span data-i18n="idleMinutes"></span> <input id="routine-idle" type="number" min="1" max="120" data-i18n-aria="idleMinutes"></label></div><p class="muted" data-i18n="routineHint"></p></section>
     <section id="layouts-panel" class="extra-panel" hidden><h2 data-i18n="layouts"></h2><div class="inline-controls"><input id="layout-name" maxlength="50" data-i18n-placeholder="layoutName" data-i18n-aria="layoutName"><button id="save-layout" data-i18n="saveLayout"></button></div><div class="inline-controls"><select id="layout-select" data-i18n-aria="layouts"></select><button id="restore-layout" data-i18n="restoreLayout"></button><button id="remove-layout" data-i18n="delete"></button></div></section>
   </details>
-  <footer><div class="footer-links"><button class="text-button" id="home" data-i18n="reset"></button><button class="text-button" id="open-folder" data-i18n="folder" data-i18n-title="folderTitle"></button><button class="text-button" id="backup" data-i18n="backup"></button><a id="github" class="text-button" href="https://github.com/iebb/petex">GitHub</a></div><button id="done" data-i18n="done"></button></footer>
+  </section>
+  </div>
+  <footer class="room-footer"><img src="../assets/clubroom/halo.png" class="room-halo" alt=""><div class="room-footer-trim" aria-hidden="true"></div><img src="../assets/clubroom/headband.png" class="room-headband" alt=""><div class="footer-links room-footer-links"><button class="text-button" id="home" data-i18n="reset"></button><button class="text-button" id="open-folder" data-i18n="folder" data-i18n-title="folderTitle"></button><button class="text-button" id="backup" data-i18n="backup"></button><a id="github" class="text-button" href="https://github.com/iebb/petex">GitHub</a></div><button id="done" data-i18n="done"></button></footer>
 </main>
 <div id="toast" role="status" aria-live="polite" hidden></div>
 <div id="drop-overlay" data-i18n="drop" hidden></div>

@@ -1,5 +1,6 @@
 import {PetSprite, availableAnimations} from './sprite.js';
 import {ACTIONS, DEFAULT_ACTION_WEIGHTS, MAX_ACTION_WEIGHT, normalizeActionWeights} from './random-action-weights.mjs';
+import {initClubroom} from './settings-clubroom.js';
 const $=id=>document.getElementById(id);
 const api=window.pedex;
 const {languages,translate}=globalThis.PetexI18n;
@@ -14,6 +15,13 @@ function localize() {
 }
 const hero=new PetSprite($('hero-pet'));
 let state, cards=[], collectionKey='', toastTimer, actionTimer, busy=false;
+let previewRun=0;
+function stopPreview() {
+  previewRun++;clearTimeout(actionTimer);
+  $('hero-pet').hidden=true;$('room-portrait').hidden=false;
+  hero.active=false;hero.action('idle');
+}
+initClubroom(page=>{if(page!=='actions')stopPreview();});
 function toast(message,error=false) {clearTimeout(toastTimer);$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;toastTimer=setTimeout(()=>$('toast').hidden=true,error?8000:4200);}
 async function run(action) {try{return await action();}catch(error){toast(error.message,true);return null;}}
 async function update(patch) {return run(()=>api.updateSettings(patch));}
@@ -24,7 +32,22 @@ function renderActionWeights(animations){
     if(!input.matches(':focus')||!input.dataset.editing)input.value=weights[name];
   }
 }
-async function playAnimation() {const raw=$('animation').value,pool=['waving','jumping','review','waiting','running','failed'],name=raw==='random'?pool[Math.floor(Math.random()*pool.length)]:raw;if(!state.settings.motion||!name)return;if(name==='cleaning10'){const pet=hero.pet;if(!await hero.prepareCleaning()||hero.pet!==pet||!state.settings.motion||$('animation').value!==raw)return;}hero.action(name);clearTimeout(actionTimer);actionTimer=setTimeout(()=>hero.action('idle'),hero.actionDuration(name));run(()=>api.playAnimation(name));}
+async function playAnimation() {
+  const raw=$('animation').value;
+  const pool=Array.from($('animation').options,option=>option.value).filter(name=>name!=='idle'&&name!=='random'&&name!=='petting3');
+  const name=raw==='random'?pool[Math.floor(Math.random()*pool.length)]:raw;
+  if(!state?.settings.motion||!name)return;
+  stopPreview();
+  const token=previewRun,pet=hero.pet;
+  await hero.edgeReady.catch(()=>{});
+  if(token!==previewRun||hero.pet!==pet)return;
+  const ready=name==='cleaning10'?await hero.prepareCleaning():ACTIONS[name]?.mop?await hero.prepareMop(name):name==='petting3'?hero.hasPetting:true;
+  if(token!==previewRun||hero.pet!==pet)return;
+  if(!ready){toast(t('imageDecode'),true);return;}
+  $('room-portrait').hidden=true;$('hero-pet').hidden=false;
+  hero.motion=true;hero.active=state.screenAwake;hero.action(name);
+  actionTimer=setTimeout(stopPreview,hero.actionDuration(name)+50);
+}
 function render(next) {
   state=next;localize();
   const {settings,pets}=state;
@@ -32,23 +55,32 @@ function render(next) {
   $('import-builtins').hidden=state.codexImports===false;
   const pet=pets.find(p=>p.id===settings.petId)||pets[0];
   hero.setPet(pet).catch(()=>toast(t('imageDecode'),true));
-  hero.active=state.screenAwake;hero.motion=settings.motion;
+  if(!settings.motion||!state.screenAwake)stopPreview();
   $('pet-name').textContent=pet.displayName;
-  $('delete-pet').hidden=!!pet.builtin;$('export-pet').hidden=!!pet.builtin;$('backup').disabled=pets.length<2;
+  $('delete-pet').hidden=!!pet.builtin;$('export-pet').hidden=!!pet.builtin;$('backup').disabled=!pets.some(p=>!p.builtin);
   const animations=availableAnimations(pet);
-  if($('animation').dataset.petId!==pet.id+'|'+state.locale){
-    $('animation').dataset.petId=pet.id+'|'+state.locale;
-    const opts=animations.filter(name=>!ACTIONS[name].mop).map(name=>{const option=document.createElement('option');option.value=name;option.textContent=t(ACTIONS[name].label);return option;});const randOpt=document.createElement('option');randOpt.value='random';randOpt.textContent=state.locale.startsWith('zh')?'随机动作':'Random';opts.push(randOpt);$('animation').replaceChildren(...opts);
-    clearTimeout(actionTimer);hero.action('idle');
+  const animationKey=[pet.id,state.locale,!!pet.pettingUrl,...animations].join('|');
+  if($('animation').dataset.petId!==animationKey){
+    $('animation').dataset.petId=animationKey;
+    const entries=animations.map(name=>[name,t(ACTIONS[name].label)]);
+    const clickEntries=[...entries.filter(([name])=>!ACTIONS[name].mop),['random',t('roomRandom')]];
+    options($('click-action'),clickEntries);
+    const previous=$('animation').value;
+    options($('animation'),[['idle',t('roomIdle')],...entries,...(pet.pettingUrl?[['petting3',t('petting')]]:[]),['random',t('roomRandom')]]);
+    $('animation').value=Array.from($('animation').options).some(o=>o.value===previous)?previous:
+      clickEntries.some(([name])=>name===settings.clickAction)?settings.clickAction:'idle';
+    stopPreview();
   }
-  const clickAction=settings.clickAction==='cleaning10'&&!pet.cleaningUrl?'waving':settings.clickAction;
+  const clickAction=Array.from($('click-action').options).some(o=>o.value===settings.clickAction)?settings.clickAction:'waving';
   renderActionWeights(animations);
-  if(clickAction&&$('animation').value!==clickAction)$('animation').value=clickAction;$('play').disabled=!settings.motion;
+  $('click-action').value=clickAction;
+  $('click-action').disabled=$('play').disabled=!settings.motion;
   $('animation').disabled=!settings.motion;
   $('presence').textContent=t(!state.screenAwake?'sleeping':!settings.visible?'hidden':state.fullscreenHidden&&settings.hideFullscreen?'fullscreenHidden':!settings.motion?'paused':'visible');
   $('pet-count').textContent=pets.length;
   $('size').value=settings.size;
   $('size-description').textContent=`${settings.size} px`;
+  paintSize();
   for(const key of ['alwaysOnTop','motion','randomActionBubbles','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','edgeCling','edgeAutoPeek','shortcut'])$(key).checked=settings[key];
   if($('edgePeekEvery'))$('edgePeekEvery').value=String(settings.edgePeekEvery||0);
   $('edgeStayMinutes').value=String((settings.edgeStayEvery??720000)/60000);
@@ -100,18 +132,23 @@ $('behaviour').onchange=()=>update({behaviour:$('behaviour').value});$('language
 $('delete-pet').onclick=()=>run(()=>api.removePet(state.settings.petId));
 $('import-builtins').onclick=async()=>{if(busy)return;busy=true;$('import-builtins').disabled=true;try{importMessage(await run(()=>api.importBuiltins()));}finally{busy=false;$('import-builtins').disabled=false;}};
 $('import-file').onclick=()=>importPets('file');
+$('import-folder').onclick=()=>importPets('folder');
 $('discover').onclick=async()=>{
   if(busy)return;busy=true;$('discover').disabled=true;
   try{const result=await run(()=>api.discoverPets());if(result){if(!result.found)toast(t('noCustom'));else importMessage(result.results);}}
   finally{busy=false;$('discover').disabled=false;}
 };
-$('animation').onchange=()=>{update({clickAction:$('animation').value});playAnimation();};$('play').onclick=playAnimation;$('hero-pet').onclick=playAnimation;
-$('hero-pet').addEventListener('mousemove',event=>{if(state?.settings.followCursor){const rect=$('hero-pet').getBoundingClientRect();hero.gaze={x:(event.clientX-rect.x-rect.width/2)*3,y:(event.clientY-rect.y-rect.height/2)*3};}});
-$('hero-pet').addEventListener('mouseleave',()=>hero.gaze=null);
+$('animation').onchange=stopPreview;
+$('click-action').onchange=()=>update({clickAction:$('click-action').value});
+$('play').onclick=playAnimation;
 for(const key of ['alwaysOnTop','motion','randomActionBubbles','followCursor','launchAtLogin','visible','hideFullscreen','snapEdges','edgeCling','edgeAutoPeek','shortcut'])$(key).onchange=async()=>{const result=await update({[key]:$(key).checked});if(!result&&state)render(state);};
 if($('edgePeekEvery'))$('edgePeekEvery').onchange=async()=>{const result=await update({edgePeekEvery:Number($('edgePeekEvery').value)||0});if(!result&&state)render(state);};
 $('edgeStayMinutes').onchange=async()=>{const input=$('edgeStayMinutes');if(!input.reportValidity())return;const result=await update({edgeStayEvery:input.valueAsNumber*60000});if(!result&&state)render(state);};
-$('size').addEventListener('input',()=>{const size=Number($('size').value);$('size-description').textContent=`${size} px`;});
+function paintSize(){
+  const input=$('size');
+  input.style.setProperty('--fill',`${(input.valueAsNumber-Number(input.min))/(Number(input.max)-Number(input.min))*100}%`);
+}
+$('size').addEventListener('input',()=>{const size=Number($('size').value);$('size-description').textContent=`${size} px`;paintSize();});
 $('size').addEventListener('change',()=>update({size:Number($('size').value)}));
 const weightInputs=Object.fromEntries(Object.keys(DEFAULT_ACTION_WEIGHTS).map(name=>{
   const row=document.createElement('label'),label=document.createElement('span'),input=document.createElement('input');

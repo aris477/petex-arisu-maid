@@ -17,6 +17,7 @@ function normalizeSettings(input = {}) {
   const behaviour = ['quiet','calm','playful'].includes(input.behaviour) ? input.behaviour : input.randomAnimations === false ? 'quiet' : 'calm';
   return {
     petId: typeof input.petId === 'string' ? input.petId : DEFAULTS.petId, clickAction: ['waving','jumping','failed','waiting','running','review','cleaning10','running-left','running-right','random'].includes(input.clickAction) ? input.clickAction : (DEFAULTS.clickAction || 'waving'),
+    hideBuiltinMiso: input.hideBuiltinMiso === true,
     size: Number.isFinite(input.size) ? Math.max(48, Math.min(MAX_PET_SIZE, Math.round(input.size))) : DEFAULTS.size,
     ...Object.fromEntries(['alwaysOnTop', 'motion', 'randomActionBubbles', 'followCursor', 'launchAtLogin', 'visible', 'hideFullscreen', 'snapEdges', 'edgeCling', 'edgeAutoPeek', 'shortcut'].map(k => [k, typeof input[k] === 'boolean' ? input[k] : DEFAULTS[k]])),
     // 0 = off; otherwise a period in ms for her to peek out on her own.
@@ -105,7 +106,7 @@ class Library {
     await fs.writeFile(`${file}.tmp`, JSON.stringify(normalizeSettings(settings), null, 2));
     await fs.rename(`${file}.tmp`, file);
   }
-  async list() {
+  async list({hideBuiltinMiso=false}={}) {
     const pets = [{...BUILTIN}];
     for (const entry of await fs.readdir(this.petsPath, {withFileTypes: true})) {
       if (!entry.isDirectory() || !/^[a-f0-9-]{36}$/.test(entry.name)) continue;
@@ -205,7 +206,7 @@ class Library {
         pets.push({...manifest, id: entry.name, assetUrl: `pet-asset://library/${entry.name}/${manifest.spritesheetPath}`, fingerprint: data.fingerprint, ...(edgeUrl ? {edgeUrl, edgeSides} : {}), ...(sadUrl ? {sadUrl} : {}), ...(lookUrl ? {lookUrl} : {}), ...(waveUrl ? {waveUrl} : {}), ...(pettingV4 ? {pettingV4, pettingUrl} : {}), ...(cleaningUrl ? {cleaningUrl} : {}), ...mopAtlases});
       } catch { /* A damaged entry must not prevent the rest of the library from loading. */ }
     }
-    return pets;
+    return hideBuiltinMiso && pets.length>1 ? pets.slice(1) : pets;
   }
   async import(input) {
     const {manifest, bytes} = await readPackage(input);

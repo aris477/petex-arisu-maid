@@ -1169,6 +1169,16 @@
   }
 };
   for(const code of Object.keys(extraMessages))Object.assign(messages[code],extraMessages[code]);
+  const roomKeys=['roomTitle1','roomTitle2','roomDesktop','roomActions','roomEdge','roomLibrary','roomSystem','roomClickAction','roomPreview','roomAddPet','roomImportFile','roomIdle','roomRandom'];
+  const roomMessages={
+    'en-GB':["Arisu’s","Maid Manual","Desktop","Actions & Bubbles","Edge & Peek","Pet Library","System","Click action","Action preview","Add pet","Import file","Idle","Random action"],
+    'zh-Hans':['爱丽丝的','女仆手册','桌面','动作与气泡','贴边与探头','角色库','系统与进阶','左键动作','动作预览','添加角色','导入文件','待机','随机动作'],
+    'zh-Hant':['愛麗絲的','女僕手冊','桌面','動作與氣泡','貼邊與探頭','角色庫','系統與進階','左鍵動作','動作預覽','新增角色','匯入檔案','待機','隨機動作'],
+    ja:['アリスの','メイド手帳','デスクトップ','動作と吹き出し','端と顔出し','ペット一覧','システム','クリック時の動作','動作プレビュー','ペットを追加','ファイルを読み込む','待機','ランダム'],
+    es:['Manual de','doncella de Arisu','Escritorio','Acciones y diálogos','Borde y asomo','Mascotas','Sistema','Acción al pulsar','Vista previa','Añadir mascota','Importar archivo','En reposo','Acción aleatoria'],
+    fr:['Arisu :','manuel de soubrette','Bureau','Actions et bulles','Bord et aperçu','Animaux','Système','Action au clic','Aperçu de l’action','Ajouter un animal','Importer un fichier','Au repos','Action aléatoire']
+  };
+  for(const [code,values] of Object.entries(roomMessages))roomKeys.forEach((key,index)=>{messages[code][key]=values[index];});
   const languages = {'en-GB':'English (UK)', 'zh-Hans':'简体中文', 'zh-Hant':'繁體中文', ja:'日本語', es:'Español', fr:'Français'};
   function resolveLocale(value) {
     const code=String(value||'en-GB').replaceAll('_','-').toLowerCase();

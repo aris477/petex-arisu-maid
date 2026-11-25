@@ -32,6 +32,7 @@ function displaysChanged(){
   if(workAreaOnly)desktop.constrain();else applySettings(true);
 }
 const SHORTCUT='CommandOrControl+Shift+P';
+const arisuIcon=path.join(__dirname,'assets','arisu-app.png');
 const locale=()=>resolveLocale(settings?.language==='auto'?app.getLocale():settings?.language);
 const t=(key,values)=>translate(locale(),key,values);
 const errorText=error=>localizeError(locale(),error);
@@ -49,7 +50,7 @@ function broadcast() {
   for(const win of [...(desktop?.windows||[]),settingsWindow,areaWindow])if(win&&!win.isDestroyed())win.webContents.send('state:changed',snapshot(win));
   updateTray();
 }
-async function reloadPets(){pets=(await library.list()).map(p=>({...p,displayName:settings.petNames[p.id]||p.displayName}));}
+async function reloadPets(){pets=(await library.list(settings)).map(p=>({...p,displayName:settings.petNames[p.id]||p.displayName}));}
 function secure(win) {
   win.webContents.setWindowOpenHandler(() => ({action: 'deny'}));
   win.webContents.on('will-navigate', event => event.preventDefault());
@@ -96,7 +97,7 @@ function updateApplicationMenu() {
 function showSettings() {
   if(quitting)return;
   if (settingsWindow && !settingsWindow.isDestroyed()) { settingsWindow.show(); settingsWindow.focus(); return; }
-  settingsWindow = new BrowserWindow({width: 700, height: 740, minWidth: 600, minHeight: 660, title: 'Petex', backgroundColor: '#f7f8f2', titleBarStyle: 'hidden', ...(process.platform === 'darwin' ? {trafficLightPosition: {x: 20, y: 21}} : {titleBarOverlay: {color: '#f7f8f2', symbolColor: '#354330', height: 42}}), autoHideMenuBar: true, show: false, webPreferences: windowOptions()});
+  settingsWindow = new BrowserWindow({width: 700, height: 740, minWidth: 420, minHeight: 540, title: 'Petex', backgroundColor: '#edf7ff', titleBarStyle: 'hidden', ...(process.platform === 'darwin' ? {trafficLightPosition: {x: 20, y: 21}} : {icon: arisuIcon, titleBarOverlay: {color: '#e5f4ff', symbolColor: '#173e74', height: 42}}), autoHideMenuBar: true, show: false, webPreferences: windowOptions()});
   secure(settingsWindow);
   settingsWindow.loadFile(rendererPath('settings.html'));
   settingsWindow.once('ready-to-show', () => {settingsWindow.show(); settingsWindow.focus();});
@@ -107,7 +108,7 @@ function updateTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     {label:`Petex · ${selectedPet().displayName}`,enabled:false},
     {label:t('selectPet'),submenu:pets.map(p=>({label:p.displayName,type:'radio',checked:p.id===settings.petId,click:()=>selectPet(p.id)}))},
-    ...(settings.features.multiPet?[{label:t('companions'),submenu:settings.companions.map(c=>({label:pets.find(p=>p.id===c.petId)?.displayName||'Miso',type:'checkbox',checked:c.visible,click:()=>enqueue(async()=>{c.visible=!c.visible;applySettings();await library.saveSettings(settings);})}))}]:[]),
+    ...(settings.features.multiPet?[{label:t('companions'),submenu:settings.companions.filter(c=>pets.some(p=>p.id===c.petId)).map(c=>({label:pets.find(p=>p.id===c.petId).displayName,type:'checkbox',checked:c.visible,click:()=>enqueue(async()=>{c.visible=!c.visible;applySettings();await library.saveSettings(settings);})}))}]:[]),
     ...(settings.features.toys?[{label:t('throwBall'),enabled:settings.motion&&settings.visible,click:()=>desktop.throwBall()}]:[]),
     ...(selectedPet().mopLeftUrl?[{label:t('mopLeft'),enabled:settings.motion&&settings.visible,click:()=>desktop.requestMop(desktop.primary,'left')}]:[]),
     ...(selectedPet().mopRightUrl?[{label:t('mopRight'),enabled:settings.motion&&settings.visible,click:()=>desktop.requestMop(desktop.primary,'right')}]:[]),
@@ -116,7 +117,7 @@ function updateTray() {
     {label:t(settings.visible?'hidePet':'showPet'),click:toggleVisible},
     {label:t(settings.motion?'pauseTray':'resumeTray'),click:()=>enqueue(async()=>{settings.motion=!settings.motion;applySettings();await library.saveSettings(settings);})},
     {label:t('resetTray'),click:()=>enqueue(async()=>{settings.visible=true;resetPosition();applySettings();await library.saveSettings(settings);})},
-    {label:t('export'),submenu:[{label:t('exportPet'),enabled:!selectedPet().builtin,click:()=>exportFromMenu('pet')},{label:t('backup'),enabled:pets.length>1,click:()=>exportFromMenu('library')}]},
+    {label:t('export'),submenu:[{label:t('exportPet'),enabled:!selectedPet().builtin,click:()=>exportFromMenu('pet')},{label:t('backup'),enabled:pets.some(p=>!p.builtin),click:()=>exportFromMenu('library')}]},
     {type:'separator'},
     {label:t('quit'),accelerator:'CommandOrControl+Q',click:()=>app.quit()},
   ]));
@@ -255,7 +256,7 @@ function configureIPC() {
     const answer = await dialog.showMessageBox(settingsWindow, {type: 'question', message:t('removeTitle',{name:pet.displayName}),detail:t('removeDetail'),buttons:[t('keep'),t('remove')], defaultId: 0, cancelId: 0});
     if (answer.response !== 1) return false;
     await library.remove(id); await reloadPets();
-    if (settings.petId === id) settings.petId = 'miso';
+    if (settings.petId === id) settings.petId = pets[0].id;
     settings.companions=settings.companions.filter(c=>c.petId!==id);delete settings.petNames[id];settings.favourites=settings.favourites.filter(value=>value!==id);
     applySettings(); await library.saveSettings(settings); return true;
   }));
@@ -312,7 +313,7 @@ function configureIPC() {
   }));
   handler('layouts:restore',settingsOnly,id=>enqueue(async()=>{
     const layout=settings.features.layouts&&settings.layouts.find(p=>p.id===id);if(!layout)throw new Error('Invalid settings.');
-    Object.assign(settings,layout.primary);if(!pets.some(p=>p.id===settings.petId))settings.petId='miso';
+    Object.assign(settings,layout.primary);if(!pets.some(p=>p.id===settings.petId))settings.petId=pets[0].id;
     settings.companions=structuredClone(layout.companions).filter(c=>pets.some(p=>p.id===c.petId));settings.placements=structuredClone(layout.placements);settings.features.multiPet=layout.multiPet;settings.features.personalities=layout.personalities;settings.randomAnimations=settings.behaviour!=='quiet';applySettings(true);await library.saveSettings(settings);
   }));
   handler('layouts:remove',settingsOnly,id=>enqueue(async()=>{settings.layouts=settings.layouts.filter(p=>p.id!==id);await library.saveSettings(settings);broadcast();}));
@@ -346,7 +347,7 @@ if (locked) app.whenReady().then(async () => {
   powerMonitor.on('suspend',()=>awake(false));powerMonitor.on('lock-screen',()=>awake(false));
   powerMonitor.on('resume',()=>awake(powerMonitor.getSystemIdleState(60)!=='locked'));powerMonitor.on('unlock-screen',()=>awake(true));
   screenAwake=powerMonitor.getSystemIdleState(60)!=='locked';
-  if (!pets.some(p => p.id === settings.petId)) settings.petId = 'miso';
+  if (!pets.some(p => p.id === settings.petId)) settings.petId = pets[0].id;
   if (snapshot().loginAvailable) settings.launchAtLogin = app.getLoginItemSettings().openAtLogin;
   protocol.handle('pet-asset', async request => {
     const url = new URL(request.url);
@@ -372,6 +373,7 @@ if (locked) app.whenReady().then(async () => {
   desktop=new DesktopPets({getState:()=>({settings,pets,screenAwake,fullscreenDisplays}),secure,windowOptions,onChange:broadcast,onSave:()=>enqueue(()=>library.saveSettings(settings))});
   petWindow=desktop.primary.win;configureIPC();await desktop.primary.ready;applySettings();
   function trayIcon() {
+    if(process.platform==='win32')return nativeImage.createFromPath(arisuIcon).resize({width:32,height:32});
     const file = process.platform === 'darwin' ? 'trayTemplate.png' : nativeTheme.shouldUseDarkColorsForSystemIntegratedUI ? 'trayLight.png' : 'tray.png';
     const icon = nativeImage.createFromPath(path.join(__dirname, 'assets', file));
     if (process.platform === 'darwin') icon.setTemplateImage(true);
