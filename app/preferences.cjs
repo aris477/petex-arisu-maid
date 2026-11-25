@@ -1,7 +1,7 @@
 const crypto = require('node:crypto');
 const FEATURES = Object.freeze(Object.fromEntries(['multiPet','interactions','personalities','roaming','toys','petting','routines','layouts','libraryTools'].map(key=>[key,false])));
 const MAX_PETS = 4;
-const MAX_PET_SIZE = 320;
+const MAX_PET_SIZE = 520;
 const plain = value => value && typeof value === 'object' && !Array.isArray(value) ? value : {};
 const text = (value,max=80) => typeof value === 'string' ? value.trim().slice(0,max) : '';
 const number = (value,min,max,fallback) => Number.isFinite(value) ? Math.max(min,Math.min(max,value)) : fallback;

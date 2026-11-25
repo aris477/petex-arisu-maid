@@ -9,7 +9,6 @@ const {centre,clamp,freeTarget,planInteraction}=require('./social.cjs');
 
 // Cling atlas geometry (mirrors app/renderer/sprite.js). Kept here too because the
 // window has to be positioned so the cell's rim lands exactly on the screen edge.
-const EDGE_CELL=EdgeGeometry.CELL;
 const EDGE_SIDES=EdgeGeometry.SIDES;
 // The cling artwork is a head-and-shoulders close-up, while the normal atlas draws her
 // full body. Drawn at the same per-atlas-pixel scale her head therefore comes out much
@@ -22,17 +21,14 @@ const EDGE_SIDES=EdgeGeometry.SIDES;
 // still lines up with the screen edge.
 const EDGE_CLING_SCALE=0.75;
 if(EDGE_CLING_SCALE!==EdgeGeometry.SCALE)throw new Error("Cling scale configuration mismatch");
-// Per-atlas-pixel scale for the cling window, derived from the normal canvas height the
-// same way the idle pose is sized. Shared by tryGrab() and validateCling() so a resize
-// or settings change never leaves a window at the wrong scale stuck to the edge.
-function clingScale(size){return (Math.ceil(size*208/192)/416)*EDGE_CLING_SCALE;}
-// Body centre as a fraction of the cell height: 0.499 for the normal 384×416 cell,
-// 0.622 for the cling cell (the artwork sits lower in a taller canvas). Used to keep
-// her body in place instead of her window centre.
-const BODY_CY_NORMAL=0.499;
-const BODY_CY_CLING=0.622;
-// The normal canvas starts this far below the window top (pet.css body padding).
+// Match the padding in pet.css. Reserve the top space for speech bubbles.
 const PET_TOP_PADDING=164;
+const PET_BOTTOM_PADDING=16;
+const PET_WINDOW_PADDING=72;
+// Native window bounds can round outward at fractional scale factors.
+const PET_DISPLAY_MARGIN=2;
+const normalSize=size=>({width:Math.max(size+PET_WINDOW_PADDING,304),
+  height:Math.ceil(size*208/192)+PET_TOP_PADDING+PET_BOTTOM_PADDING});
 // Drop within this many DIP of an edge and she grabs it.
 const EDGE_GRAB=48;
 // She may also be dragged so her body is already past the edge; that still counts.
@@ -68,31 +64,46 @@ class DesktopPets {
   }
   create(id) {
     const p={id,loaded:false,drag:null,walking:null,busyUntil:0,lastCursor:null,lastPetting:-Infinity,activity:null};
-    const config=this.config(p),width=Math.max(config.size+72,304),height=Math.ceil(config.size*208/192)+180;
+    const {width,height}=normalSize(this.displaySize(p));
     p.win=new BrowserWindow({width,height,minWidth:width,maxWidth:width,minHeight:height,maxHeight:height,useContentSize:true,frame:false,transparent:true,backgroundColor:'#00000000',hasShadow:false,resizable:false,maximizable:false,minimizable:false,fullscreenable:false,skipTaskbar:true,show:false,title:id==='primary'?'Petex pet':`Petex pet · ${id}`,webPreferences:this.windowOptions()});
     this.secure(p.win);p.win.setIgnoreMouseEvents(true,{forward:true});this.instances.set(id,p);
     p.win.on('close',e=>{if(!this.disposed){e.preventDefault();this.hide(p);}});
     p.ready=p.win.loadFile(path.join(__dirname,'renderer','pet.html')).then(()=>{if(!this.disposed&&!p.win.isDestroyed()){p.loaded=true;this.place(p);this.refresh();}});
     return p;
   }
-  area(p) {
-    const {settings}=this.getState(),bounds=p.win.getBounds();
-    const zone=settings.features.roaming?settings.roamArea:null;
-    const display=zone?screen.getAllDisplays().find(d=>String(d.id)===zone.displayId):null;
-    const work=(display||screen.getDisplayMatching(bounds)).workArea;
+  roamingDisplay(){
+    const {settings}=this.getState(), zone=settings.features.roaming?settings.roamArea:null;
+    return zone?screen.getAllDisplays().find(d=>String(d.id)===zone.displayId):null;
+  }
+  workspace(p, fallback){
+    return (this.roamingDisplay()||fallback||(p.win?screen.getDisplayMatching(p.win.getBounds()):screen.getPrimaryDisplay())).workArea;
+  }
+  displaySize(p,work=this.workspace(p)){
+    // Retain the user's preferred size in settings, even on a smaller display.
+    const fitHeight=Math.floor((work.height-PET_TOP_PADDING-PET_BOTTOM_PADDING-PET_DISPLAY_MARGIN)*192/208);
+    return Math.max(48,Math.min(this.config(p).size,work.width-PET_WINDOW_PADDING-PET_DISPLAY_MARGIN,fitHeight));
+  }
+  area(p,work=this.workspace(p)) {
+    const {settings}=this.getState(), zone=settings.roamArea;
+    const display=this.roamingDisplay();
     if(!zone?.rect||!display)return work;
-    const r=zone.rect,config=this.config(p),width=Math.min(work.width,Math.max(Math.max(config.size+72,304),Math.round(work.width*r.width))),height=Math.min(work.height,Math.max(Math.ceil(config.size*208/192)+180,Math.round(work.height*r.height)));
+    const r=zone.rect,sized=normalSize(this.displaySize(p,work));
+    const width=Math.min(work.width,Math.max(sized.width,Math.round(work.width*r.width))),height=Math.min(work.height,Math.max(sized.height,Math.round(work.height*r.height)));
     return {x:Math.min(Math.round(work.x+work.width*r.x),work.x+work.width-width),y:Math.min(Math.round(work.y+work.height*r.y),work.y+work.height-height),width,height};
   }
   place(p,reflow=false) {
     // A clinging pet owns its own geometry; re-placing it would undo the rim alignment.
     if(p.cling)return;
-    const {settings}=this.getState(),config=this.config(p),width=Math.max(config.size+72,304),height=Math.ceil(config.size*208/192)+180;
+    const {settings}=this.getState(),config=this.config(p);
     let position=config.position;
     const anchor=settings.placements[p.id];
-    if((reflow||!position)&&anchor){const display=screen.getAllDisplays().find(d=>String(d.id)===anchor.displayId)||screen.getPrimaryDisplay();position={x:display.workArea.x+anchor.x*(display.workArea.width-width),y:display.workArea.y+anchor.y*(display.workArea.height-height)};}
-    if(!position){const area=screen.getPrimaryDisplay().workArea;const offset=[...this.instances.keys()].indexOf(p.id);position={x:area.x+area.width-width-64-offset*(width+16),y:area.y+area.height-height-24};}
-    p.win.setMinimumSize(width,height);p.win.setMaximumSize(width,height);const cb=clamp({...position,width,height},this.area(p));p.win.setBounds({x:Math.round(cb.x),y:Math.round(cb.y),width,height});
+    const anchored=anchor&&screen.getAllDisplays().find(d=>String(d.id)===anchor.displayId);
+    const display=anchored||((reflow||!position)&&anchor?screen.getPrimaryDisplay():
+      position?screen.getDisplayMatching({...position,width:1,height:1}):screen.getPrimaryDisplay());
+    const work=this.workspace(p,display),{width,height}=normalSize(this.displaySize(p,work));
+    if((reflow||!position)&&anchor)position={x:work.x+anchor.x*(work.width-width),y:work.y+anchor.y*(work.height-height)};
+    if(!position){const offset=[...this.instances.keys()].indexOf(p.id);position={x:work.x+work.width-width-64-offset*(width+16),y:work.y+work.height-height-24};}
+    p.win.setMinimumSize(width,height);p.win.setMaximumSize(width,height);const cb=clamp({...position,width,height},this.area(p,work));p.win.setBounds({...cb,width,height});
     p.win.setAlwaysOnTop(config.alwaysOnTop,'floating');
     if(process.platform==='darwin')p.win.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true});
     this.remember(p,false);
@@ -137,11 +148,16 @@ class DesktopPets {
     if(this.disposed)return;
     const now=performance.now();
     for(const p of this.instances.values()){
+      this.validateCling(p);
       if(p.cling)continue;
-      const bounds=p.win.getBounds(),area=this.area(p),position=clamp(bounds,area);
-      if(position.x!==bounds.x||position.y!==bounds.y){const cfg=this.config(p),winW=Math.max(cfg.size+72,304),winH=Math.ceil(cfg.size*208/192)+180;p.win.setBounds({x:Math.round(position.x),y:Math.round(position.y),width:winW,height:winH});}
+      const bounds=p.win.getBounds(),area=this.area(p);
+      const dimensions=normalSize(this.displaySize(p));
+      const position=clamp({...bounds,...dimensions},area);
+      p.win.setMinimumSize(dimensions.width,dimensions.height);
+      p.win.setMaximumSize(dimensions.width,dimensions.height);
+      p.win.setBounds({...position,...dimensions});
       if(p.walking?.mopping)this.cancelMop(p);
-      else if(p.walking){const walk=p.walking;p.walking={origin:{...bounds,...position},target:clamp({...bounds,...walk.target},area),started:now,duration:Math.max(1,walk.duration-(now-walk.started))};}
+      else if(p.walking){const walk=p.walking;p.walking={origin:{...position,...dimensions},target:clamp({...walk.target,...dimensions},area),started:now,duration:Math.max(1,walk.duration-(now-walk.started))};}
       this.remember(p,false);
     }
     this.refresh();this.onSave();
@@ -167,7 +183,7 @@ class DesktopPets {
           if(p.cling){this.detachCling(p,true);const nb=p.win.getBounds();p.drag.offset={x:cursor.x-nb.x,y:cursor.y-nb.y};p.dragStart={...nb};}
         }
         if(movement.dragging){
-          const cfg=this.config(p),winW=Math.max(cfg.size+72,304),winH=Math.ceil(cfg.size*208/192)+180;
+          const {width:winW,height:winH}=normalSize(this.displaySize(p));
           // A normal clamp would pin the window inside the work area, and since her body
           // starts ~113 px in from the window's left edge, her body could then never get
           // closer than 113 px to the screen edge — the cling could never trigger. So let
@@ -184,7 +200,9 @@ class DesktopPets {
       if(p.walking){
         const w=p.walking,progress=Math.min(1,(now-w.started)/w.duration),eased=w.mopping?progress:progress*progress*(3-2*progress),bounds=p.win.getBounds();
         const candidate={x:Math.round(w.origin.x+(w.target.x-w.origin.x)*eased),y:Math.round(w.origin.y+(w.target.y-w.origin.y)*eased)};
-        const cfg=this.config(p),winW=Math.max(cfg.size+72,304),winH=Math.ceil(cfg.size*208/192)+180,target=freeTarget({x:bounds.x,y:bounds.y,width:winW,height:winH},candidate,this.obstacles(p),this.area(p));p.win.setBounds({x:Math.round(target.x),y:Math.round(target.y),width:winW,height:winH});
+        const dimensions=normalSize(this.displaySize(p));
+        const target=freeTarget({...bounds,...dimensions},candidate,this.obstacles(p),this.area(p));
+        p.win.setBounds({...target,...dimensions});
         const blocked=target.x!==candidate.x||target.y!==candidate.y;
         if(progress>=1||blocked){
           if(w.mopping&&blocked)this.cancelMop(p);
@@ -253,7 +271,7 @@ class DesktopPets {
     if(request.expires<performance.now()||!this.active(p)||!this.config(p).motion||p.drag||p.cling||!this.mopUrl(p,direction))return 0;
     if(automatic&&!this.allowsAutomaticMop(p,direction))return 0;
     const sign=direction==='left'?-1:1;
-    const origin=p.win.getBounds(),speed=MOP_SPEED[direction]*this.config(p).size/384;
+    const origin=p.win.getBounds(),speed=MOP_SPEED[direction]*this.displaySize(p)/384;
     const end=freeTarget(origin,{x:origin.x+sign*Math.round(speed*MOP_MS/1000),y:origin.y},this.obstacles(p),this.area(p));
     const duration=Math.min(MOP_MS,sign*(end.x-origin.x)*1000/speed);
     if(end.y!==origin.y||duration<240)return 0;
@@ -280,7 +298,7 @@ class DesktopPets {
     const config=this.config(p);
     if(!this.active(p)||!config.motion||!config.randomAnimations||p.drag||p.cling||!['running-left','running-right'].includes(name)||!Number.isFinite(duration)||duration<250||duration>3600)throw Object.assign(new Error(),{key:'walkError'});
     if(this.social?.ids.includes(p.id))return;
-    const b=p.win.getBounds();this.move(p,{x:b.x+(name==='running-left'?-1:1)*Math.max(24,Math.min(96,config.size*.65)),y:b.y},duration);
+    const b=p.win.getBounds();this.move(p,{x:b.x+(name==='running-left'?-1:1)*Math.max(24,Math.min(96,this.displaySize(p)*.65)),y:b.y},duration);
   }
   action(p,name,coordinated=false,duration) {
     // While clinging she is tucked into the edge and the renderer refuses to draw
@@ -335,14 +353,14 @@ class DesktopPets {
   // starts right after does not jump.
   detachCling(p,withAnchor=false){
     if(!p?.cling)return;
-    const area=this.area(p),cfg=this.config(p),b=p.win.getBounds();
-    const width=Math.max(cfg.size+72,304),height=Math.ceil(cfg.size*208/192)+180;
+    const area=this.area(p),size=this.displaySize(p),b=p.win.getBounds();
+    const {width,height}=normalSize(size);
     const cursor=screen.getCursorScreenPoint();
     const sideName=p.cling.side;
     const box=this.bodyBox(p);
     const restored=EdgeGeometry.detach(sideName,b,{width,height},box,area);
     p.cling=null;p.clingPeek=undefined;p.bubble?.clear();
-    if(!p.win.isDestroyed())p.win.webContents.send('pet:cling-end');
+    if(!p.win.isDestroyed())p.win.webContents.send('pet:cling-end',{displaySize:size});
     if(p.win.isDestroyed())return;
     p.win.setMinimumSize(width,height);p.win.setMaximumSize(width,height);
     // Keep her body exactly where it was and allow the window to hang off the screen by
@@ -362,7 +380,7 @@ class DesktopPets {
       const fromCling=p.clingPress;p.clingPress=false;
       // A click on a clinging pet just talks to her: she keeps hanging on the wall.
       if(fromCling&&!wasDragging){p.busyUntil=performance.now()+3000;this.refresh();this.onSave();return;}
-      const cfg=this.config(p),winW=Math.max(cfg.size+72,304),winH=Math.ceil(cfg.size*208/192)+180;
+      const {width:winW,height:winH}=normalSize(this.displaySize(p));
       const bNow=p.win.getBounds(),start=p.dragStart||bNow;
       p.dragStart=null;
       const bounds={x:bNow.x,y:bNow.y,width:winW,height:winH};
@@ -403,14 +421,9 @@ class DesktopPets {
   // measured against the BODY, not the window, otherwise "she is at the screen edge"
   // never registers (the window is already at x=-113 by then).
   bodyBox(p){
-    const cfg=this.config(p),width=Math.max(cfg.size+72,304),height=Math.ceil(cfg.size*208/192)+180;
-    const padL=24,padR=24,padT=164,padB=16;
-    const boxW=width-padL-padR,boxH=height-padT-padB;
-    // The canvas is a 384 × 416 atlas cell scaled to fit the padded box (object-fit:
-    // contain), then centred. Note the atlas pixel dimensions, not the 192 × 208
-    // "logical" ones — using those halves the offsets.
-    const k=Math.min(boxW/384,boxH/416);
-    const offX=padL+(boxW-384*k)/2, offY=padT+(boxH-416*k)/2;
+    const size=this.displaySize(p),{width,height}=normalSize(size);
+    const k=size/384;
+    const offX=(width-size)/2, offY=(PET_TOP_PADDING+height-PET_BOTTOM_PADDING-416*k)/2;
     // Body bbox inside a 384 × 416 cell, measured from the atlas: x 98..286, y 14..402.
     return {
       left:offX+98*k, right:offX+286*k,
@@ -450,17 +463,16 @@ class DesktopPets {
   // which runs on every settings change, pet switch and size change.
   validateCling(p){
     if(!p?.cling)return;
-    const cfg=this.config(p);
-    const wantW=Math.round(EDGE_CELL.w*clingScale(cfg.size));
-    if(this.getState().settings.edgeCling===false||!this.edgeSides(p).includes(p.cling.side)||Math.abs(p.cling.width-wantW)>1||!this.active(p)){
+    const {width:wantW,height:wantH}=EdgeGeometry.sizeFor(this.displaySize(p));
+    if(this.getState().settings.edgeCling===false||!this.edgeSides(p).includes(p.cling.side)||p.cling.width!==wantW||p.cling.height!==wantH||!this.active(p)){
       this.detachCling(p);
       const position=clamp({...p.win.getBounds(),width:this.fitWidth(p),height:this.fitHeight(p)},this.area(p));
       p.win.setBounds({x:Math.round(position.x),y:Math.round(position.y),width:this.fitWidth(p),height:this.fitHeight(p)});
       this.remember(p);
     }
   }
-  fitWidth(p){return Math.max(this.config(p).size+72,304);}
-  fitHeight(p){return Math.ceil(this.config(p).size*208/192)+180;}
+  fitWidth(p){return normalSize(this.displaySize(p)).width;}
+  fitHeight(p){return normalSize(this.displaySize(p)).height;}
   // Grab the edge she was dropped near: resize the window to the cling cell's aspect,
   // then place it so the cell's rim lands exactly on the screen edge.
   tryGrab(p,bounds){
@@ -474,8 +486,8 @@ class DesktopPets {
     if(!side||!sides.includes(side))return false;
     // Remember the choice for the rest of this drag so re-evaluating it cannot flip sides.
     p.clingLock=side;
-    const cfg=this.config(p),area=this.area(p),b=bounds||p.win.getBounds();
-    const placed=EdgeGeometry.place(side,cfg.size,b,this.bodyBox(p),area);
+    const area=this.area(p),b=bounds||p.win.getBounds();
+    const placed=EdgeGeometry.place(side,this.displaySize(p),b,this.bodyBox(p),area);
     const {width:clingW,height:winH}=placed;
     p.cling={side,width:clingW,height:winH,since:performance.now(),token:(p.clingToken||0)+1,revision:0,frame:0,bubbleFollow:0,retractedAt:null,selfPeekUntil:0,restore:{x:b.x,y:b.y,width:b.width,height:b.height}};
     p.clingToken=p.cling.token;p.clingPeek=false;
@@ -520,7 +532,7 @@ class DesktopPets {
     if(pet?.pettingV4){
       if(!p.cling)this.action(p,'petting3',false,pet.pettingUrl?duration:undefined);
     }else this.action(p,'waving');
-    p.win.webContents.send('pet:stroke',{sway:!pet?.pettingV4});
+    p.win.webContents.send('pet:stroke',{sway:!!p.cling||!pet?.pettingV4});
     return true;
   }
   cancelSocial() {if(this.social){for(const id of this.social.ids){const p=this.instances.get(id);if(p){if(p.walking)this.remember(p);p.walking=null;p.activity=null;p.win.webContents.send('pet:social-end');}}this.social=null;}this.nextSocial=performance.now()+25000+Math.random()*35000;}

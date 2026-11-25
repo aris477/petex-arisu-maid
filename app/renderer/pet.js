@@ -305,7 +305,8 @@ function render(state){
   edgeDialogue.setStayInterval(next.edgeStayEvery);
   // While clinging the canvas must stay at 100% (see setCanvasSize), so a settings
   // broadcast in the middle of a cling must not re-pin it to pixel sizes.
-  if(next?.size&&!clinging)setCanvasSize(next.size);
+  displaySize=state.displaySize??next.size;
+  if(!clinging)setCanvasSize(displaySize);
   sprite.active=active;sprite.motion=settings.motion;
   sprite.setPet(pet).catch(()=>sprite.setPet(state.pets[0]));
   if(active&&next.motion&&next.randomAnimations&&next.randomActionWeights?.cleaning10>0&&pet.cleaningUrl&&!sprite.hasCleaning){
@@ -339,6 +340,7 @@ api.onSocialEnd(()=>{socialUntil=0;sprite.gaze=null;resetBehaviour();});
 // no longer maps 1:1 (so the rim stops lining up with the screen edge) and the 384 x 512
 // drawing gets squashed into the wrong aspect. Clear the inline size while clinging and
 // put it back afterwards.
+let displaySize;
 function setCanvasSize(size){
   if(!size){canvas.style.width='';canvas.style.height='';return;}
   const h=Math.ceil(size*208/192);
@@ -380,13 +382,14 @@ api.onCling(async({side,token})=>{
   if(pendingPeek!==null)applyClingPeek(pendingPeek);
 });
 api.onClingPeek(payload=>{if(pendingCling){pendingPeek=payload;return;}if(clinging)applyClingPeek(payload);});
-api.onClingEnd(()=>{
+api.onClingEnd(payload=>{
   clingRequest++;pendingCling=null;pendingPeek=null;stopEdgeDialogue();
   if(!clinging)return;
   clinging=null;
+  canvas.classList.remove('petted');
   delete document.body.dataset.edge;
   document.body.classList.remove('clinging');
-  setCanvasSize(settings?.size);
+  setCanvasSize(payload?.displaySize??displaySize);
   sprite.releaseEdge();resetBehaviour();
   if(currentSpeech&&performance.now()<currentSpeech.started+currentSpeech.duration)showSpeech({...currentSpeech,duration:currentSpeech.started+currentSpeech.duration-performance.now()});
 });

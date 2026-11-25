@@ -6,7 +6,7 @@ const geom=require(path.join(ROOT,'app','renderer','edge-config.js'));
 const enabled=process.argv.slice(3).length?process.argv.slice(3):['left','right','bottom','top'];
 let passed=0;
 function test(name,fn){try{fn();passed++;}catch(e){console.error(name,e.message);throw e;}}
-for(const side of enabled)for(const size of [48,120,160,200,240])for(const origin of [[0,0],[-1920,-180]]){
+for(const side of enabled)for(const size of [48,120,160,200,240,520])for(const origin of [[0,0],[-1920,-180]]){
   AREA.x=origin[0];AREA.y=origin[1];
   const e=make({size}),{dp,p,state}=e;
   state.pets=[{...PETS[0],edgeSides:enabled}];

@@ -42,7 +42,7 @@ const selectedPet = () => pets.find(p => p.id === settings.petId) || pets[0];
 function snapshot(win) {
   const instance=desktop?.fromWindow(win);
   const instances=desktop?[...desktop.instances.values()].map(p=>({id:p.id,petId:desktop.config(p).petId,size:desktop.config(p).size,behaviour:desktop.config(p).behaviour,visible:desktop.config(p).visible,active:desktop.active(p),activity:p.activity,bounds:p.win.getBounds()})):[];
-  return {settings:instance?desktop.config(instance):settings,pets,instanceId:instance?.id,instances,displays:screen.getAllDisplays().map(d=>({id:String(d.id),name:d.label||String(d.id),workArea:d.workArea})),platform:process.platform,version:app.getVersion(),locale:locale(),petActive:instance?desktop.active(instance):petActive(),screenAwake,activityReady,fullscreenHidden,resting:desktop?.routineResting||false,shortcutAvailable,fullscreenAvailable:!!fullscreenMonitor?.available,codexImports:!process.mas,loginAvailable:app.isPackaged&&!process.env.PEDEX_DATA_DIR};
+  return {settings:instance?desktop.config(instance):settings,displaySize:instance?desktop.displaySize(instance):undefined,pets,instanceId:instance?.id,instances,displays:screen.getAllDisplays().map(d=>({id:String(d.id),name:d.label||String(d.id),workArea:d.workArea})),platform:process.platform,version:app.getVersion(),locale:locale(),petActive:instance?desktop.active(instance):petActive(),screenAwake,activityReady,fullscreenHidden,resting:desktop?.routineResting||false,shortcutAvailable,fullscreenAvailable:!!fullscreenMonitor?.available,codexImports:!process.mas,loginAvailable:app.isPackaged&&!process.env.PEDEX_DATA_DIR};
 }
 function broadcast() {
   if(quitting)return;
