@@ -4,14 +4,16 @@ const os = require('node:os');
 const fs = require('node:fs/promises');
 const { pathToFileURL } = require('node:url');
 const { Library, normalizeSettings } = require('./library.cjs');
+const { seedBundledArisu } = require('./bundled-arisu.cjs');
 const {findArchive, readBuiltins} = require('./codex-builtins.cjs');
 const {DesktopPets}=require('./desktop.cjs');
 const {MAX_PETS,newCompanion}=require('./preferences.cjs');
 const {FullscreenMonitor} = require('./fullscreen.cjs');
 const {resolveLocale,translate,localizeError} = require('./locales.js');
 
-// Keep the original library location so renaming the app preserves existing pets.
-app.setPath('userData', process.env.PEDEX_DATA_DIR || path.join(app.getPath('appData'), 'Pedex'));
+const macTrial = process.platform === 'darwin' && app.isPackaged;
+const dataName = macTrial ? 'Arisu Maid Trial' : 'Pedex';
+app.setPath('userData', process.env.PEDEX_DATA_DIR || path.join(app.getPath('appData'), dataName));
 app.setName('Petex');
 // Anonymous image loads need a CORS-enabled scheme to preserve canvas alpha reads.
 protocol.registerSchemesAsPrivileged([{scheme: 'pet-asset', privileges: {standard: true, secure: true, supportFetchAPI: true, corsEnabled: true}}]);
@@ -333,6 +335,7 @@ app.on('window-all-closed', () => {});
 app.on('before-quit',()=>{quitting=true;desktop?.dispose();clearInterval(fullscreenTimer);fullscreenMonitor?.stop();globalShortcut.unregisterAll();});
 if (locked) app.whenReady().then(async () => {
   library = new Library(app.getPath('userData')); await library.init();
+  if (macTrial) await seedBundledArisu(library, path.join(process.resourcesPath, 'arisu-maid-hd-2x'));
   settings = await library.settings(); await reloadPets();
   fullscreenMonitor=new FullscreenMonitor();
   fullscreenMonitor.on('change',({fullscreen,locked})=>{

@@ -1,0 +1,42 @@
+name: macOS Apple Silicon preview
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/macos-arm64-preview]
+
+permissions:
+  contents: read
+
+jobs:
+  package-and-smoke:
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Verify runner architecture
+        run: node -e 'if (process.platform !== "darwin" || process.arch !== "arm64") process.exit(1)'
+      - run: npm ci --no-audit --no-fund
+      - run: node tests/edge/run.cjs
+      - run: npm run package:mac
+      - name: Launch the extracted package
+        run: |
+          mkdir -p "$RUNNER_TEMP/arisu-unzip"
+          ditto -x -k dist/*-macOS-arm64-preview.zip "$RUNNER_TEMP/arisu-unzip"
+          node tests/macos/smoke.cjs "$RUNNER_TEMP/arisu-unzip/Arisu Maid.app/Contents/MacOS/Arisu Maid"
+      - name: Record checksum
+        working-directory: dist
+        run: shasum -a 256 *-macOS-arm64-preview.zip > SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arisu-maid-macos-arm64-preview
+          path: |
+            dist/*-macOS-arm64-preview.zip
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
